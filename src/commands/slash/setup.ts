@@ -18,8 +18,8 @@ export default class SetupCommand extends SlashCommandBuilder {
 		const embed = new EmbedBuilder()
 			.setColor('#f2d9b6')
 			.setTitle('Virtue Dashboard')
-			.setURL('https://canary.xernerx.com/dashboard?view=virtue')
-			.setDescription('This bot cannot be setup within the discord app. Click the [link](https://canary.xernerx.com/dashboard?view=virtue) to configure the bot.');
+			.setURL(`https://app.xernerx.com/dashboard?view=virtue&guild=${interaction.guild.id}`)
+			.setDescription(`This bot cannot be setup within the discord app. Click the [link](https://app.xernerx.com/dashboard?view=virtue&guild=${interaction.guild.id}) to configure the bot.`);
 
 		interaction.util.reply({ embeds: [embed], ephemeral: true });
 	}
