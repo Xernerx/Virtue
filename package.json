@@ -1,0 +1,30 @@
+{
+	"name": "virtue",
+	"version": "1.0.0",
+	"description": "",
+	"main": "dist/main.js",
+	"type": "module",
+	"scripts": {
+		"dev": "pnpm i && tsc-watch --onSuccess \"node .\"",
+		"build": "tsc",
+		"start": "node ."
+	},
+	"engines": {
+		"node": ">=20"
+	},
+	"keywords": [],
+	"author": "Xernerx Studios",
+	"license": "MIT",
+	"packageManager": "pnpm@10.33.2",
+	"devDependencies": {
+		"prettier": "^3.8.3",
+		"tsc-watch": "^7.2.0",
+		"typescript": "^5.9.3"
+	},
+	"dependencies": {
+		"@xernerx/framework": "^1.0.2",
+		"@xernerx/websocket": "^0.4.10",
+		"discord.js": "^14.26.4",
+		"dotenv": "^17.4.2"
+	}
+}
