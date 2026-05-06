@@ -41,7 +41,7 @@ export default class ClientReadyEvent extends EventBuilder {
 				presence.status = 'online' as PresenceStatusData;
 				activity.name = 'Watching you level!';
 				activity.type = ActivityType.Custom;
-				activity.state = 'Keeping track of your activeness!';
+				activity.state = `Keeping track of your activeness! | ${client.guilds.cache.size} servers!`;
 			}
 
 			client.user?.setPresence(presence);
