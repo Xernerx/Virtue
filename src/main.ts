@@ -1,6 +1,7 @@
 /** @format */
 
 import { XernerxClient } from '@xernerx/framework';
+import { XernerxStats } from '@xernerx/stats';
 import { XernerxWebsocket } from '@xernerx/websocket';
 import { config } from 'dotenv';
 
@@ -24,6 +25,7 @@ export class Client extends XernerxClient {
 			intents: ['Guilds', 'GuildMessages'],
 			token: process.env.TOKEN as string,
 			guildId: '784094726432489522',
+			global: process.env.NODE_ENV != 'DEVELOPMENT',
 		});
 
 		this.modules.eventHandler.loadEvents({
@@ -43,3 +45,5 @@ export class Client extends XernerxClient {
 await websocket.connect();
 
 export const client = new Client();
+
+new XernerxStats(client as any, { token: process.env.API_TOKEN! });

@@ -11,6 +11,9 @@ importers:
       '@xernerx/framework':
         specifier: ^1.0.2
         version: 1.0.2(@discordjs/core@2.2.2)(discord.js@14.26.4)
+      '@xernerx/stats':
+        specifier: ^1.0.8
+        version: 1.0.8
       '@xernerx/websocket':
         specifier: ^0.4.10
         version: 0.4.10
@@ -101,6 +104,10 @@ packages:
     peerDependencies:
       '@discordjs/core': 2.2.2
       discord.js: 14.22.1
+
+  '@xernerx/stats@1.0.8':
+    resolution: {integrity: sha512-REpxZQQdL5Ml+vEfb0btEv+P9UDj5tZmQ5OYPIY8iYqa6N2LJ7v0JPsUAU/qPS+ARarSVdJ5HhktJ2sePYCywg==}
+    engines: {node: '>=24'}
 
   '@xernerx/terminal@1.0.7':
     resolution: {integrity: sha512-qk6qXwaW7fSVVbs1P+9OesLFxcNsEifgDR2OzcOOQRmStoO8l4pyaX27EJQ+69wYFKtTdABGx2Hc9zQXiNj9vw==}
@@ -521,6 +528,10 @@ snapshots:
       ora: 8.2.0
       sharpyy: 1.1.0
       zod: 4.1.8
+
+  '@xernerx/stats@1.0.8':
+    dependencies:
+      '@xernerx/terminal': 1.0.7
 
   '@xernerx/terminal@1.0.7':
     dependencies:
