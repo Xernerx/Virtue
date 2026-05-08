@@ -119,7 +119,7 @@ export default class MessageCreateEvent extends EventBuilder {
 
 					const m = (await guild._doc.levelChannel) ? message.client.channels.fetch(guild._doc.levelChannel).then((c: any) => c.send(msg)) : message.reply(msg);
 
-					if (guild._doc.autoDelete && guild._doc.levelChannel) setTimeout(() => m.delete(), guild._doc.autoDelete * 1000);
+					if (guild._doc.autoDelete && !guild._doc.levelChannel) setTimeout(() => m.delete().catch(() => true), guild._doc.autoDelete * 1000);
 				}
 			}
 		}
