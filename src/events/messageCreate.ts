@@ -117,7 +117,9 @@ export default class MessageCreateEvent extends EventBuilder {
 						.replace(/\[@level\]/gi, String(memberLevel))
 						.replace(/\[@server\]/gi, message.guild.name);
 
-					guild._doc.levelChannel ? message.client.channels.fetch(guild._doc.levelChannel).then((c: any) => c.send(msg)) : message.reply(msg);
+					const m = (await guild._doc.levelChannel) ? message.client.channels.fetch(guild._doc.levelChannel).then((c: any) => c.send(msg)) : message.reply(msg);
+
+					if (guild._doc.autoDelete && guild._doc.levelChannel) setTimeout(() => m.delete(), guild._doc.autoDelete * 1000);
 				}
 			}
 		}
