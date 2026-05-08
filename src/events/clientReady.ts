@@ -8,7 +8,7 @@ export default class ClientReadyEvent extends EventBuilder {
 		super('clientReady', {
 			name: 'clientReady',
 			emitter: 'client',
-			once: true, // ← fix this
+			once: true,
 		});
 	}
 

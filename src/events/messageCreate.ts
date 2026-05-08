@@ -90,7 +90,11 @@ export default class MessageCreateEvent extends EventBuilder {
 				userXp -= calculateLevel('balanced', userLevel);
 				userLevel++;
 
-				message.author.send('Level up!');
+				const status = await fetch(`${process.env.API_URL}/users/${message.author.id}/profile`)
+					.then((res) => res.json())
+					.catch(() => null);
+
+				if (status?.notifications?.virtue?.levelup?.discord) message.author.send(`You went level up! You are now level ${userLevel}`).catch(() => null);
 			}
 		}
 
