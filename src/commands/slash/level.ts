@@ -1,7 +1,7 @@
 /** @format */
 
-import { SlashCommandBuilder } from '@xernerx/framework';
-import { EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, type SlashCommandOptions } from '@xernerx/framework';
+import { ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
 import { calculateLevel } from '../../lib/levels.js';
 
 export default class LevelCommand extends SlashCommandBuilder {
@@ -9,18 +9,27 @@ export default class LevelCommand extends SlashCommandBuilder {
 		super('level', {
 			name: 'level',
 			description: 'View your levels.',
+			options: [
+				{
+					type: 'user',
+					name: 'user',
+					description: 'user',
+				},
+			],
 			permissions: {
 				user: ['SendMessages'],
 			},
 		});
 	}
 
-	override async exec({ interaction }: { interaction: any }) {
+	override async exec({ interaction, options }: SlashCommandOptions) {
 		const ws = (this.client as any).websocket;
 
-		const user = await ws.get('virtue', 'users', { id: interaction.user.id });
-		const member = await ws.get('virtue', 'members', { id: interaction.user.id, guild: interaction.guild.id });
-		const guild = await ws.get('virtue', 'guilds', { id: interaction.guild.id });
+		const target = (options?.user as any)?.user || (interaction.user as any);
+
+		const user = await ws.get('virtue', 'users', { id: target.id });
+		const member = await ws.get('virtue', 'members', { id: target.id, guild: interaction.guild?.id });
+		const guild = await ws.get('virtue', 'guilds', { id: interaction.guild?.id });
 
 		const settings = guild._doc;
 
@@ -57,7 +66,7 @@ export default class LevelCommand extends SlashCommandBuilder {
 		if (member) {
 			embed.addFields([
 				{
-					name: `${interaction.guild.name} Level`,
+					name: `${interaction.guild?.name} Level`,
 					value: [
 						`**${member._doc.textLevel || 0}** ${makeBar(levels.local.progress)} **${(member._doc.textLevel || 0) + 1}**`,
 						`XP: \`${levels.local.current}/${levels.local.next}\` (${levels.local.progress}%)`,
