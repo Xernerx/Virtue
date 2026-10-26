@@ -3,8 +3,6 @@
 import { EventBuilder } from '@xernerx/framework';
 import { calculateExperience, calculateLevel } from '../lib/levels.js';
 
-type Doc<T> = { _doc: T };
-
 const cooldowns = {
 	easy: 30,
 	casual: 45,
@@ -25,16 +23,16 @@ export default class MessageCreateEvent extends EventBuilder {
 		});
 	}
 
-	private async getOrCreate(collection: string, query: any) {
+	private async getOrCreate(service: string, action: string, query: any) {
 		const ws = (this.client as any).websocket;
 
-		let data = await ws.get('virtue', collection, query);
+		let data = await ws.get(service, action, query).catch(() => null);
 
 		if (!data) {
-			data = await ws.create('virtue', collection, query);
+			data = await ws.create(service, action, query).catch(() => null);
 		}
 
-		return data?._doc ? data : null;
+		return data ?? null;
 	}
 
 	private hasCooldown(key: string, duration: number, cache: Map<string, number>) {
@@ -51,22 +49,25 @@ export default class MessageCreateEvent extends EventBuilder {
 	override async run(message: any) {
 		if (!message.guild || message.author.bot || message.system) return;
 
-		const user = await this.getOrCreate('users', {
-			id: message.author.id,
-		});
-
-		const member = await this.getOrCreate('members', {
-			id: message.author.id,
-			guild: message.guild.id,
-		});
-
-		const guild = await this.getOrCreate('guilds', {
-			id: message.guild.id,
-		});
+		const [user, member, guild] = await Promise.all([
+			this.getOrCreate('xernerx', 'levels', {
+				ownerId: message.author.id,
+			}),
+			this.getOrCreate('virtue', 'text', {
+				id: message.author.id,
+				guild: message.guild.id,
+			}),
+			this.getOrCreate('virtue', 'guilds', {
+				id: message.guild.id,
+			}),
+			this.getOrCreate('virtue', 'users', {
+				id: message.author.id,
+			}),
+		]);
 
 		if (!user || !member || !guild) return;
 
-		const mode = guild._doc.mode || 'balanced';
+		const mode = guild.mode || 'balanced';
 		const cooldown = cooldowns[mode as keyof typeof cooldowns] || cooldowns.balanced;
 
 		const globalCooldown = cooldown * 2;
@@ -74,14 +75,20 @@ export default class MessageCreateEvent extends EventBuilder {
 		const globalKey = `${message.author.id}`;
 		const guildKey = `${message.guild.id}:${message.author.id}`;
 
+		const memberRoles = message.member?.roles?.cache;
+		const isIgnored = Array.isArray(guild.roles?.ignored) && guild.roles.ignored.length > 0 && memberRoles?.some((r: any) => guild.roles.ignored.includes(r.id));
+		const isUntracked = Array.isArray(guild.roles?.tracked) && guild.roles.tracked.length > 0 && !memberRoles?.some((r: any) => guild.roles.tracked.includes(r.id));
+
 		const bypassGlobal = this.hasCooldown(globalKey, globalCooldown, this.globalCooldowns);
-		const bypassGuild = this.hasCooldown(guildKey, cooldown, this.guildCooldowns);
+		const bypassGuild = isIgnored || isUntracked || this.hasCooldown(guildKey, cooldown, this.guildCooldowns);
 
 		const xpGain = calculateExperience(mode);
 
+		const ws = (this.client as any).websocket;
+
 		// ===== GLOBAL =====
-		let userLevel = user._doc.textLevel ?? 0;
-		let userXp = user._doc.textExperience ?? 0;
+		let userLevel = user.level ?? 0;
+		let userXp = user.xp ?? 0;
 
 		if (!bypassGlobal) {
 			userXp += xpGain;
@@ -90,17 +97,21 @@ export default class MessageCreateEvent extends EventBuilder {
 				userXp -= calculateLevel('balanced', userLevel);
 				userLevel++;
 
-				const status = await fetch(`${process.env.API_URL}/users/${message.author.id}/profile`)
-					.then((res) => res.json())
-					.catch(() => null);
+				const profile = await ws.get('xernerx', 'users', { id: message.author.id }).catch(() => null);
 
-				if (status?.notifications?.virtue?.levelup?.discord) message.author.send(`You went level up! You are now level ${userLevel}`).catch(() => null);
+				if (profile?.notifications?.virtue?.levelup?.discord) {
+					message.author.send(`You went level up! You are now level ${userLevel}`).catch(() => null);
+				}
 			}
 		}
 
 		// ===== LOCAL =====
-		let memberLevel = member._doc.textLevel ?? 0;
-		let memberXp = member._doc.textExperience ?? 0;
+		let memberLevel = member.level ?? 0;
+		let memberXp = member.xp ?? 0;
+		const memberMessages = (member.messages ?? 0) + 1;
+
+		const levelRoles: Array<{ level: number; roleId: string }> =
+			Array.isArray(guild.levelRoles) && guild.levelRoles.length > 0 ? guild.levelRoles : Array.isArray(guild.roles?.levels) ? guild.roles.levels : [];
 
 		if (!bypassGuild) {
 			memberXp += xpGain;
@@ -109,35 +120,63 @@ export default class MessageCreateEvent extends EventBuilder {
 				memberXp -= calculateLevel(mode, memberLevel);
 				memberLevel++;
 
-				if (guild._doc.levelUp) {
-					const msg = guild._doc.levelMessage
-						.replace(/\[@mention\]/gi, message.author)
+				if (guild.levelUp) {
+					const unlockedAtLevel = levelRoles.filter((lr) => Number(lr?.level) === memberLevel && lr?.roleId);
+					const highestUnlocked = [...levelRoles].filter((lr) => Number(lr?.level) <= memberLevel && lr?.roleId).sort((a, b) => Number(b.level) - Number(a.level))[0];
+					const roleMention = unlockedAtLevel.length > 0 ? unlockedAtLevel.map((lr) => `<@&${lr.roleId}>`).join(', ') : highestUnlocked ? `<@&${highestUnlocked.roleId}>` : '';
+
+					const msg = (guild.levelMessage || '[@mention] reached level [@level] :tada:!')
+						.replace(/\[@mention\]|\{user\}/gi, `${message.author}`)
 						.replace(/\[@username\]/gi, message.author.globalName || message.author.username)
-						.replace(/\[@nickname\]/gi, message.member.nickname || message.author.globalName || message.author.username)
-						.replace(/\[@level\]/gi, String(memberLevel))
+						.replace(/\[@nickname\]/gi, message.member?.nickname || message.author.globalName || message.author.username)
+						.replace(/\[@level\]|\{level\}/gi, String(memberLevel))
+						.replace(/\[@role\]|\{role\}/gi, roleMention)
 						.replace(/\[@server\]/gi, message.guild.name);
 
-					const m = guild._doc.levelChannel ? await message.client.channels.fetch(guild._doc.levelChannel).then((c: any) => c.send(msg)) : await message.reply(msg);
+					const m = guild.levelChannel
+						? await message.client.channels
+								.fetch(guild.levelChannel)
+								.then((c: any) => c?.send(msg))
+								.catch(() => null)
+						: await message.reply(msg).catch(() => null);
 
-					if (guild._doc.autoDelete && !guild._doc.levelChannel) setTimeout(() => m.delete().catch(() => true), guild._doc.autoDelete * 1000);
+					if (m && guild.autoDelete && !guild.levelChannel) setTimeout(() => m.delete().catch(() => true), guild.autoDelete * 1000);
 				}
 			}
 		}
 
-		const ws = (this.client as any).websocket;
+		if (!isIgnored && !isUntracked && levelRoles.length > 0 && message.member?.roles) {
+			const missingRoleIds = Array.from(
+				new Set(
+					levelRoles
+						.filter((lr) => lr?.roleId && Number(lr.level) > 0 && Number(lr.level) <= memberLevel)
+						.map((lr) => String(lr.roleId).trim())
+						.filter((roleId) => roleId && !message.member.roles.cache.has(roleId))
+				)
+			);
+
+			if (missingRoleIds.length > 0) {
+				await message.member.roles.add(missingRoleIds).catch(() => null);
+			}
+		}
 
 		await Promise.all([
-			ws.update('virtue', 'users', {
-				id: message.author.id,
-				textLevel: userLevel,
-				textExperience: userXp,
-			}),
-			ws.update('virtue', 'members', {
-				id: message.author.id,
-				guild: message.guild.id,
-				textLevel: memberLevel,
-				textExperience: memberXp,
-			}),
+			ws
+				.update('xernerx', 'levels', {
+					ownerId: message.author.id,
+					level: userLevel,
+					xp: userXp,
+				})
+				.catch(() => null),
+			ws
+				.update('virtue', 'text', {
+					id: message.author.id,
+					guild: message.guild.id,
+					level: memberLevel,
+					xp: memberXp,
+					messages: memberMessages,
+				})
+				.catch(() => null),
 		]);
 	}
 }
