@@ -27,7 +27,7 @@ export class Client extends XernerxClient {
 			intents: ['Guilds', 'GuildMessages', 'GuildVoiceStates'],
 			token: process.env.TOKEN as string,
 			guildId: '784094726432489522',
-			owners: ['438029970371837962', '482513687417061376'],
+			owners: '482513687417061376',
 			global: process.env.NODE_ENV != 'DEVELOPMENT',
 		});
 
