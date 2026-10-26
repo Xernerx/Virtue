@@ -2,6 +2,7 @@
 
 import { EventBuilder } from '@xernerx/framework';
 import type { Guild } from 'discord.js';
+import { syncGuildMetadata } from '../lib/guildSync.js';
 
 export default class GuildCreateEvent extends EventBuilder {
 	constructor() {
@@ -16,11 +17,6 @@ export default class GuildCreateEvent extends EventBuilder {
 		if (!guild?.id) return;
 
 		const ws = (this.client as any).websocket;
-
-		const existing = await ws.get('virtue', 'guilds', { id: guild.id }).catch(() => null);
-
-		if (!existing) {
-			await ws.create('virtue', 'guilds', { id: guild.id }).catch(() => null);
-		}
+		await syncGuildMetadata(ws, guild);
 	}
 }

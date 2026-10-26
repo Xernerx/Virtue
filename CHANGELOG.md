@@ -1,5 +1,15 @@
 <!-- @format -->
 
+## 2.1.0
+
+### Minor Changes
+
+- ### Unified Server Leveling & Automatic Role/Channel Synchronization
+  
+  - **Unified Server Level (`virtue` -> `levels`)**: Added a unified per-server level that progresses from both text and voice activity independently from the server's separate **Text Level** (`virtue` -> `text`) and **Voice Level** (`virtue` -> `voice`), while **Global Level** (`xernerx` -> `levels`) continues to track unified progression across all servers, text, voice, and website interactions.
+  - **Expanded `/level` Overview**: Updated `/level` to display **Global Level**, **`{Server}` Level**, **`{Server}` Text Level**, **`{Server}` Voice Level**, and **Level Roles** progression.
+  - **Dashboard Role & Channel Sync**: Added automatic synchronization of server roles and text/announcement channels on startup (`clientReady`), server join (`guildCreate`), and `/setup` so role and channel dropdowns populate immediately in the Xernerx Suite dashboard.
+
 ## 2.0.1
 
 ### Patch Changes

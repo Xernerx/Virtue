@@ -2,6 +2,7 @@
 
 import { SlashCommandBuilder } from '@xernerx/framework';
 import { EmbedBuilder } from 'discord.js';
+import { syncGuildMetadata } from '../../lib/guildSync.js';
 
 export default class SetupCommand extends SlashCommandBuilder {
 	constructor() {
@@ -17,12 +18,8 @@ export default class SetupCommand extends SlashCommandBuilder {
 	override async exec({ interaction }: { interaction: any }) {
 		const ws = (this.client as any).websocket;
 
-		if (interaction.guild?.id) {
-			const existing = await ws.get('virtue', 'guilds', { id: interaction.guild.id }).catch(() => null);
-
-			if (!existing) {
-				await ws.create('virtue', 'guilds', { id: interaction.guild.id }).catch(() => null);
-			}
+		if (interaction.guild) {
+			await syncGuildMetadata(ws, interaction.guild);
 		}
 
 		const url = `https://app.xernerx.com/dashboard?tab=virtue&guild=${interaction.guild.id}`;

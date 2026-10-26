@@ -27,14 +27,15 @@ export default class LevelCommand extends SlashCommandBuilder {
 
 		const target = (options?.user as any)?.user || (interaction.user as any);
 
-		const [user, member, voice, guild] = await Promise.all([
+		const [user, member, text, voice, guild] = await Promise.all([
 			ws.get('xernerx', 'levels', { ownerId: target.id }).catch(() => null),
+			ws.get('virtue', 'levels', { id: target.id, guild: interaction.guild?.id }).catch(() => null),
 			ws.get('virtue', 'text', { id: target.id, guild: interaction.guild?.id }).catch(() => null),
 			ws.get('virtue', 'voice', { id: target.id, guild: interaction.guild?.id }).catch(() => null),
 			ws.get('virtue', 'guilds', { id: interaction.guild?.id }).catch(() => null),
 		]);
 
-		if (!user && !member && !voice)
+		if (!user && !member && !text && !voice)
 			return interaction.util.reply({
 				content: 'You have never sent a message where I can see it... Why?',
 				ephemeral: true,
@@ -43,8 +44,10 @@ export default class LevelCommand extends SlashCommandBuilder {
 		const mode = guild?.mode || 'balanced';
 		const globalLevel = user?.level ?? 0;
 		const globalXp = user?.xp ?? 0;
-		const localLevel = member?.level ?? 0;
-		const localXp = member?.xp ?? 0;
+		const serverLevel = member?.level ?? 0;
+		const serverXp = member?.xp ?? 0;
+		const textLevel = text?.level ?? 0;
+		const textXp = text?.xp ?? 0;
 		const voiceLevel = voice?.level ?? 0;
 		const voiceXp = voice?.xp ?? 0;
 
@@ -54,9 +57,14 @@ export default class LevelCommand extends SlashCommandBuilder {
 				current: globalXp,
 				progress: 0,
 			},
-			local: {
-				next: calculateLevel(mode, localLevel),
-				current: localXp,
+			server: {
+				next: calculateLevel(mode, serverLevel),
+				current: serverXp,
+				progress: 0,
+			},
+			text: {
+				next: calculateLevel(mode, textLevel),
+				current: textXp,
 				progress: 0,
 			},
 			voice: {
@@ -67,7 +75,8 @@ export default class LevelCommand extends SlashCommandBuilder {
 		};
 
 		levels.global.progress = Math.round((levels.global.current / levels.global.next) * 10000) / 100;
-		levels.local.progress = Math.round((levels.local.current / levels.local.next) * 10000) / 100;
+		levels.server.progress = Math.round((levels.server.current / levels.server.next) * 10000) / 100;
+		levels.text.progress = Math.round((levels.text.current / levels.text.next) * 10000) / 100;
 		levels.voice.progress = Math.round((levels.voice.current / levels.voice.next) * 10000) / 100;
 
 		const makeBar = (progress: number, size = 10) => {
@@ -90,11 +99,20 @@ export default class LevelCommand extends SlashCommandBuilder {
 		if (member) {
 			embed.addFields([
 				{
+					name: `${interaction.guild?.name} Level`,
+					value: [`**${serverLevel}** ${makeBar(levels.server.progress)} **${serverLevel + 1}**`, `XP: \`${levels.server.current}/${levels.server.next}\` (${levels.server.progress}%)`].join('\n'),
+				},
+			]);
+		}
+
+		if (text) {
+			embed.addFields([
+				{
 					name: `${interaction.guild?.name} Text Level`,
 					value: [
-						`**${localLevel}** ${makeBar(levels.local.progress)} **${localLevel + 1}**`,
-						`XP: \`${levels.local.current}/${levels.local.next}\` (${levels.local.progress}%)`,
-						`Messages: \`${member.messages ?? 0}\``,
+						`**${textLevel}** ${makeBar(levels.text.progress)} **${textLevel + 1}**`,
+						`XP: \`${levels.text.current}/${levels.text.next}\` (${levels.text.progress}%)`,
+						`Messages: \`${text.messages ?? 0}\``,
 					].join('\n'),
 				},
 			]);
@@ -120,9 +138,8 @@ export default class LevelCommand extends SlashCommandBuilder {
 
 		if (levelRoles.length > 0) {
 			const sortedRoles = [...levelRoles].filter((lr) => lr?.roleId && Number(lr.level) > 0).sort((a, b) => Number(a.level) - Number(b.level));
-			const highestServerLevel = Math.max(localLevel, voiceLevel);
-			const currentUnlocked = [...sortedRoles].filter((lr) => Number(lr.level) <= highestServerLevel).pop();
-			const nextRole = sortedRoles.find((lr) => Number(lr.level) > highestServerLevel);
+			const currentUnlocked = [...sortedRoles].filter((lr) => Number(lr.level) <= serverLevel).pop();
+			const nextRole = sortedRoles.find((lr) => Number(lr.level) > serverLevel);
 
 			const lines: string[] = [];
 			if (currentUnlocked) lines.push(`Current: <@&${currentUnlocked.roleId}> (Level ${currentUnlocked.level})`);

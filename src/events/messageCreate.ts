@@ -49,9 +49,13 @@ export default class MessageCreateEvent extends EventBuilder {
 	override async run(message: any) {
 		if (!message.guild || message.author.bot || message.system) return;
 
-		const [user, member, guild] = await Promise.all([
+		const [user, member, text, guild] = await Promise.all([
 			this.getOrCreate('xernerx', 'levels', {
 				ownerId: message.author.id,
+			}),
+			this.getOrCreate('virtue', 'levels', {
+				id: message.author.id,
+				guild: message.guild.id,
 			}),
 			this.getOrCreate('virtue', 'text', {
 				id: message.author.id,
@@ -65,12 +69,12 @@ export default class MessageCreateEvent extends EventBuilder {
 			}),
 		]);
 
-		if (!user || !member || !guild) return;
+		if (!user || !member || !text || !guild) return;
 
 		const mode = guild.mode || 'balanced';
 		const cooldown = cooldowns[mode as keyof typeof cooldowns] || cooldowns.balanced;
 
-		const globalCooldown = cooldown * 2;
+		const globalCooldown = cooldowns.balanced * 2;
 
 		const globalKey = `${message.author.id}`;
 		const guildKey = `${message.guild.id}:${message.author.id}`;
@@ -82,7 +86,8 @@ export default class MessageCreateEvent extends EventBuilder {
 		const bypassGlobal = this.hasCooldown(globalKey, globalCooldown, this.globalCooldowns);
 		const bypassGuild = isIgnored || isUntracked || this.hasCooldown(guildKey, cooldown, this.guildCooldowns);
 
-		const xpGain = calculateExperience(mode);
+		const globalXpGain = calculateExperience('balanced');
+		const guildXpGain = calculateExperience(mode);
 
 		const ws = (this.client as any).websocket;
 
@@ -91,7 +96,7 @@ export default class MessageCreateEvent extends EventBuilder {
 		let userXp = user.xp ?? 0;
 
 		if (!bypassGlobal) {
-			userXp += xpGain;
+			userXp += globalXpGain;
 
 			while (userXp >= calculateLevel('balanced', userLevel)) {
 				userXp -= calculateLevel('balanced', userLevel);
@@ -105,16 +110,25 @@ export default class MessageCreateEvent extends EventBuilder {
 			}
 		}
 
-		// ===== LOCAL =====
+		// ===== GUILD LEVEL (UNIFIED) & TEXT LEVEL =====
 		let memberLevel = member.level ?? 0;
 		let memberXp = member.xp ?? 0;
-		const memberMessages = (member.messages ?? 0) + 1;
+
+		let textLevel = text.level ?? 0;
+		let textXp = text.xp ?? 0;
+		const textMessages = (text.messages ?? 0) + 1;
 
 		const levelRoles: Array<{ level: number; roleId: string }> =
 			Array.isArray(guild.levelRoles) && guild.levelRoles.length > 0 ? guild.levelRoles : Array.isArray(guild.roles?.levels) ? guild.roles.levels : [];
 
 		if (!bypassGuild) {
-			memberXp += xpGain;
+			memberXp += guildXpGain;
+			textXp += guildXpGain;
+
+			while (textXp >= calculateLevel(mode, textLevel)) {
+				textXp -= calculateLevel(mode, textLevel);
+				textLevel++;
+			}
 
 			while (memberXp >= calculateLevel(mode, memberLevel)) {
 				memberXp -= calculateLevel(mode, memberLevel);
@@ -169,12 +183,20 @@ export default class MessageCreateEvent extends EventBuilder {
 				})
 				.catch(() => null),
 			ws
-				.update('virtue', 'text', {
+				.update('virtue', 'levels', {
 					id: message.author.id,
 					guild: message.guild.id,
 					level: memberLevel,
 					xp: memberXp,
-					messages: memberMessages,
+				})
+				.catch(() => null),
+			ws
+				.update('virtue', 'text', {
+					id: message.author.id,
+					guild: message.guild.id,
+					level: textLevel,
+					xp: textXp,
+					messages: textMessages,
 				})
 				.catch(() => null),
 		]);

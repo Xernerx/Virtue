@@ -2,6 +2,7 @@
 
 import { EventBuilder } from '@xernerx/framework';
 import { ActivityType, type PresenceStatusData } from 'discord.js';
+import { syncGuildMetadata } from '../lib/guildSync.js';
 
 export default class ClientReadyEvent extends EventBuilder {
 	private guildsSynced = false;
@@ -20,11 +21,7 @@ export default class ClientReadyEvent extends EventBuilder {
 		const ws = (this.client as any).websocket;
 
 		for (const [, guild] of this.client.guilds.cache) {
-			const existing = await ws.get('virtue', 'guilds', { id: guild.id }).catch(() => null);
-
-			if (!existing) {
-				await ws.create('virtue', 'guilds', { id: guild.id }).catch(() => null);
-			}
+			await syncGuildMetadata(ws, guild);
 		}
 
 		this.guildsSynced = true;

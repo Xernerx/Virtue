@@ -91,9 +91,13 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 		const userId = state.member.id;
 		const guildId = state.guild.id;
 
-		const [user, voice, guild] = await Promise.all([
+		const [user, member, voice, guild] = await Promise.all([
 			this.getOrCreate('xernerx', 'levels', {
 				ownerId: userId,
+			}),
+			this.getOrCreate('virtue', 'levels', {
+				id: userId,
+				guild: guildId,
 			}),
 			this.getOrCreate('virtue', 'voice', {
 				id: userId,
@@ -107,11 +111,11 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 			}),
 		]);
 
-		if (!user || !voice || !guild) return;
+		if (!user || !member || !voice || !guild) return;
 
 		const mode = guild.mode || 'balanced';
 		const cooldown = cooldowns[mode as keyof typeof cooldowns] || cooldowns.balanced;
-		const globalCooldown = cooldown * 2;
+		const globalCooldown = cooldowns.balanced * 2;
 
 		const globalKey = `${userId}`;
 		const guildKey = `${guildId}:${userId}`;
@@ -123,7 +127,8 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 		const bypassGlobal = this.hasCooldown(globalKey, globalCooldown, this.globalCooldowns);
 		const bypassGuild = isIgnored || isUntracked || this.hasCooldown(guildKey, cooldown, this.guildCooldowns);
 
-		const xpGain = calculateExperience(mode);
+		const globalXpGain = calculateExperience('balanced');
+		const guildXpGain = calculateExperience(mode);
 		const ws = (this.client as any).websocket;
 
 		// ===== GLOBAL =====
@@ -131,7 +136,7 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 		let userXp = user.xp ?? 0;
 
 		if (!bypassGlobal) {
-			userXp += xpGain;
+			userXp += globalXpGain;
 
 			while (userXp >= calculateLevel('balanced', userLevel)) {
 				userXp -= calculateLevel('balanced', userLevel);
@@ -145,7 +150,10 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 			}
 		}
 
-		// ===== LOCAL VOICE =====
+		// ===== GUILD LEVEL (UNIFIED) & VOICE LEVEL =====
+		let memberLevel = member.level ?? 0;
+		let memberXp = member.xp ?? 0;
+
 		let voiceLevel = voice.level ?? 0;
 		let voiceXp = voice.xp ?? 0;
 		const timeSpent = (voice.timeSpent ?? 0) + elapsedSeconds;
@@ -154,22 +162,28 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 			Array.isArray(guild.levelRoles) && guild.levelRoles.length > 0 ? guild.levelRoles : Array.isArray(guild.roles?.levels) ? guild.roles.levels : [];
 
 		if (!bypassGuild) {
-			voiceXp += xpGain;
+			memberXp += guildXpGain;
+			voiceXp += guildXpGain;
 
 			while (voiceXp >= calculateLevel(mode, voiceLevel)) {
 				voiceXp -= calculateLevel(mode, voiceLevel);
 				voiceLevel++;
+			}
+
+			while (memberXp >= calculateLevel(mode, memberLevel)) {
+				memberXp -= calculateLevel(mode, memberLevel);
+				memberLevel++;
 
 				if (guild.levelUp && guild.levelChannel) {
-					const unlockedAtLevel = levelRoles.filter((lr) => Number(lr?.level) === voiceLevel && lr?.roleId);
-					const highestUnlocked = [...levelRoles].filter((lr) => Number(lr?.level) <= voiceLevel && lr?.roleId).sort((a, b) => Number(b.level) - Number(a.level))[0];
+					const unlockedAtLevel = levelRoles.filter((lr) => Number(lr?.level) === memberLevel && lr?.roleId);
+					const highestUnlocked = [...levelRoles].filter((lr) => Number(lr?.level) <= memberLevel && lr?.roleId).sort((a, b) => Number(b.level) - Number(a.level))[0];
 					const roleMention = unlockedAtLevel.length > 0 ? unlockedAtLevel.map((lr) => `<@&${lr.roleId}>`).join(', ') : highestUnlocked ? `<@&${highestUnlocked.roleId}>` : '';
 
 					const msg = (guild.levelMessage || '[@mention] reached level [@level] :tada:!')
 						.replace(/\[@mention\]|\{user\}/gi, `${state.member.user}`)
 						.replace(/\[@username\]/gi, state.member.user.globalName || state.member.user.username)
 						.replace(/\[@nickname\]/gi, state.member.nickname || state.member.user.globalName || state.member.user.username)
-						.replace(/\[@level\]|\{level\}/gi, String(voiceLevel))
+						.replace(/\[@level\]|\{level\}/gi, String(memberLevel))
 						.replace(/\[@role\]|\{role\}/gi, roleMention)
 						.replace(/\[@server\]/gi, state.guild.name);
 
@@ -185,7 +199,7 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 			const missingRoleIds = Array.from(
 				new Set(
 					levelRoles
-						.filter((lr) => lr?.roleId && Number(lr.level) > 0 && Number(lr.level) <= voiceLevel)
+						.filter((lr) => lr?.roleId && Number(lr.level) > 0 && Number(lr.level) <= memberLevel)
 						.map((lr) => String(lr.roleId).trim())
 						.filter((roleId) => roleId && !state.member!.roles.cache.has(roleId))
 				)
@@ -202,6 +216,14 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 					ownerId: userId,
 					level: userLevel,
 					xp: userXp,
+				})
+				.catch(() => null),
+			ws
+				.update('virtue', 'levels', {
+					id: userId,
+					guild: guildId,
+					level: memberLevel,
+					xp: memberXp,
 				})
 				.catch(() => null),
 			ws
