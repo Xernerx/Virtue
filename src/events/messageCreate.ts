@@ -26,10 +26,22 @@ export default class MessageCreateEvent extends EventBuilder {
 	private async getOrCreate(service: string, action: string, query: any) {
 		const ws = (this.client as any).websocket;
 
-		let data = await ws.get(service, action, query).catch(() => null);
+		let getFailed = false;
+		let data = await ws.get(service, action, query).catch((err: unknown) => {
+			getFailed = true;
+			console.error(`[WS] GET ${service}/${action} failed:`, (err as Error)?.message || err);
+			return null;
+		});
 
 		if (!data) {
-			data = await ws.create(service, action, query).catch(() => null);
+			data = await ws.create(service, action, query).catch((err: unknown) => {
+				console.error(`[WS] POST ${service}/${action} failed:`, (err as Error)?.message || err);
+				return null;
+			});
+		}
+
+		if (!data && !getFailed) {
+			data = await ws.update(service, action, query).catch(() => null);
 		}
 
 		return data ?? null;
@@ -49,7 +61,7 @@ export default class MessageCreateEvent extends EventBuilder {
 	override async run(message: any) {
 		if (!message.guild || message.author.bot || message.system) return;
 
-		const [user, member, text, guild] = await Promise.all([
+		const [user, member, text, rawGuild] = await Promise.all([
 			this.getOrCreate('xernerx', 'levels', {
 				ownerId: message.author.id,
 			}),
@@ -69,7 +81,9 @@ export default class MessageCreateEvent extends EventBuilder {
 			}),
 		]);
 
-		if (!user || !member || !text || !guild) return;
+		if (!user && !member && !text) return;
+
+		const guild = rawGuild || { id: message.guild.id, mode: 'balanced', levelUp: true };
 
 		const mode = guild.mode || 'balanced';
 		const cooldown = cooldowns[mode as keyof typeof cooldowns] || cooldowns.balanced;
@@ -92,10 +106,10 @@ export default class MessageCreateEvent extends EventBuilder {
 		const ws = (this.client as any).websocket;
 
 		// ===== GLOBAL =====
-		let userLevel = user.level ?? 0;
-		let userXp = user.xp ?? 0;
+		let userLevel = user?.level ?? 0;
+		let userXp = user?.xp ?? 0;
 
-		if (!bypassGlobal) {
+		if (user && !bypassGlobal) {
 			userXp += globalXpGain;
 
 			while (userXp >= calculateLevel('balanced', userLevel)) {
@@ -111,50 +125,55 @@ export default class MessageCreateEvent extends EventBuilder {
 		}
 
 		// ===== GUILD LEVEL (UNIFIED) & TEXT LEVEL =====
-		let memberLevel = member.level ?? 0;
-		let memberXp = member.xp ?? 0;
+		const effectiveMember = member || text;
+		let memberLevel = effectiveMember?.level ?? 0;
+		let memberXp = effectiveMember?.xp ?? 0;
 
-		let textLevel = text.level ?? 0;
-		let textXp = text.xp ?? 0;
-		const textMessages = (text.messages ?? 0) + 1;
+		let textLevel = text?.level ?? 0;
+		let textXp = text?.xp ?? 0;
+		const textMessages = (text?.messages ?? 0) + 1;
 
 		const levelRoles: Array<{ level: number; roleId: string }> =
 			Array.isArray(guild.levelRoles) && guild.levelRoles.length > 0 ? guild.levelRoles : Array.isArray(guild.roles?.levels) ? guild.roles.levels : [];
 
 		if (!bypassGuild) {
-			memberXp += guildXpGain;
-			textXp += guildXpGain;
+			if (effectiveMember) memberXp += guildXpGain;
+			if (text) textXp += guildXpGain;
 
-			while (textXp >= calculateLevel(mode, textLevel)) {
-				textXp -= calculateLevel(mode, textLevel);
-				textLevel++;
+			if (text) {
+				while (textXp >= calculateLevel(mode, textLevel)) {
+					textXp -= calculateLevel(mode, textLevel);
+					textLevel++;
+				}
 			}
 
-			while (memberXp >= calculateLevel(mode, memberLevel)) {
-				memberXp -= calculateLevel(mode, memberLevel);
-				memberLevel++;
+			if (effectiveMember) {
+				while (memberXp >= calculateLevel(mode, memberLevel)) {
+					memberXp -= calculateLevel(mode, memberLevel);
+					memberLevel++;
 
-				if (guild.levelUp) {
-					const unlockedAtLevel = levelRoles.filter((lr) => Number(lr?.level) === memberLevel && lr?.roleId);
-					const highestUnlocked = [...levelRoles].filter((lr) => Number(lr?.level) <= memberLevel && lr?.roleId).sort((a, b) => Number(b.level) - Number(a.level))[0];
-					const roleMention = unlockedAtLevel.length > 0 ? unlockedAtLevel.map((lr) => `<@&${lr.roleId}>`).join(', ') : highestUnlocked ? `<@&${highestUnlocked.roleId}>` : '';
+					if (guild.levelUp) {
+						const unlockedAtLevel = levelRoles.filter((lr) => Number(lr?.level) === memberLevel && lr?.roleId);
+						const highestUnlocked = [...levelRoles].filter((lr) => Number(lr?.level) <= memberLevel && lr?.roleId).sort((a, b) => Number(b.level) - Number(a.level))[0];
+						const roleMention = unlockedAtLevel.length > 0 ? unlockedAtLevel.map((lr) => `<@&${lr.roleId}>`).join(', ') : highestUnlocked ? `<@&${highestUnlocked.roleId}>` : '';
 
-					const msg = (guild.levelMessage || '[@mention] reached level [@level] :tada:!')
-						.replace(/\[@mention\]|\{user\}/gi, `${message.author}`)
-						.replace(/\[@username\]/gi, message.author.globalName || message.author.username)
-						.replace(/\[@nickname\]/gi, message.member?.nickname || message.author.globalName || message.author.username)
-						.replace(/\[@level\]|\{level\}/gi, String(memberLevel))
-						.replace(/\[@role\]|\{role\}/gi, roleMention)
-						.replace(/\[@server\]/gi, message.guild.name);
+						const msg = (guild.levelMessage || '[@mention] reached level [@level] :tada:!')
+							.replace(/\[@mention\]|\{user\}/gi, `${message.author}`)
+							.replace(/\[@username\]/gi, message.author.globalName || message.author.username)
+							.replace(/\[@nickname\]/gi, message.member?.nickname || message.author.globalName || message.author.username)
+							.replace(/\[@level\]|\{level\}/gi, String(memberLevel))
+							.replace(/\[@role\]|\{role\}/gi, roleMention)
+							.replace(/\[@server\]/gi, message.guild.name);
 
-					const m = guild.levelChannel
-						? await message.client.channels
-								.fetch(guild.levelChannel)
-								.then((c: any) => c?.send(msg))
-								.catch(() => null)
-						: await message.reply(msg).catch(() => null);
+						const m = guild.levelChannel
+							? await message.client.channels
+									.fetch(guild.levelChannel)
+									.then((c: any) => c?.send(msg))
+									.catch(() => null)
+							: await message.reply(msg).catch(() => null);
 
-					if (m && guild.autoDelete && !guild.levelChannel) setTimeout(() => m.delete().catch(() => true), guild.autoDelete * 1000);
+						if (m && guild.autoDelete && !guild.levelChannel) setTimeout(() => m.delete().catch(() => true), guild.autoDelete * 1000);
+					}
 				}
 			}
 		}
@@ -174,31 +193,56 @@ export default class MessageCreateEvent extends EventBuilder {
 			}
 		}
 
-		await Promise.all([
-			ws
-				.update('xernerx', 'levels', {
-					ownerId: message.author.id,
-					level: userLevel,
-					xp: userXp,
-				})
-				.catch(() => null),
-			ws
-				.update('virtue', 'levels', {
-					id: message.author.id,
-					guild: message.guild.id,
-					level: memberLevel,
-					xp: memberXp,
-				})
-				.catch(() => null),
-			ws
-				.update('virtue', 'text', {
-					id: message.author.id,
-					guild: message.guild.id,
-					level: textLevel,
-					xp: textXp,
-					messages: textMessages,
-				})
-				.catch(() => null),
-		]);
+		const updates: Promise<any>[] = [];
+
+		if (user) {
+			updates.push(
+				ws
+					.update('xernerx', 'levels', {
+						ownerId: message.author.id,
+						level: userLevel,
+						xp: userXp,
+					})
+					.catch((err: unknown) => {
+						console.error('[WS] PATCH xernerx/levels failed:', (err as Error)?.message || err);
+						return null;
+					})
+			);
+		}
+
+		if (member) {
+			updates.push(
+				ws
+					.update('virtue', 'levels', {
+						id: message.author.id,
+						guild: message.guild.id,
+						level: memberLevel,
+						xp: memberXp,
+					})
+					.catch((err: unknown) => {
+						console.error('[WS] PATCH virtue/levels failed:', (err as Error)?.message || err);
+						return null;
+					})
+			);
+		}
+
+		if (text) {
+			updates.push(
+				ws
+					.update('virtue', 'text', {
+						id: message.author.id,
+						guild: message.guild.id,
+						level: textLevel,
+						xp: textXp,
+						messages: textMessages,
+					})
+					.catch((err: unknown) => {
+						console.error('[WS] PATCH virtue/text failed:', (err as Error)?.message || err);
+						return null;
+					})
+			);
+		}
+
+		await Promise.all(updates);
 	}
 }

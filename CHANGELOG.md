@@ -1,5 +1,11 @@
 <!-- @format -->
 
+## 2.1.1
+
+### Patch Changes
+
+- Fixed WebSocket connection recovery, environment-aware gateway URLs (`ws.dev.xernerx.com` in development and `ws.xernerx.com` in production), and decoupled global and guild XP progression so individual record failures do not block XP gain.
+
 ## 2.1.0
 
 ### Minor Changes

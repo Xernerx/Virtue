@@ -30,7 +30,8 @@ export default class ClientReadyEvent extends EventBuilder {
 	override async run() {
 		const client = this.client;
 		const ws = (client as any).websocket;
-		const healthUrl = process.env.NODE_ENV == 'DEVELOPMENT' ? 'https://ws.dev.xernerx.com/health' : 'https://ws.xernerx.com/health';
+		const isDev = process.env.NODE_ENV?.toUpperCase() === 'DEVELOPMENT' || process.env.ENVIRONMENT?.toUpperCase() === 'DEVELOPMENT';
+		const healthUrl = isDev ? 'https://ws.dev.xernerx.com/health' : 'https://ws.xernerx.com/health';
 
 		const connect = async () => {
 			const healthy = await fetch(healthUrl)
@@ -41,8 +42,14 @@ export default class ClientReadyEvent extends EventBuilder {
 				? await ws
 						.connect()
 						.then(() => true)
-						.catch(() => false)
-				: false;
+						.catch((err: unknown) => {
+							console.error('[WS] Failed to connect to Xernerx WebSocket:', (err as Error)?.message || err);
+							return false;
+						})
+				: await ws
+						.connect()
+						.then(() => true)
+						.catch(() => false);
 
 			const activity = {
 				name: 'Xernerx WS',

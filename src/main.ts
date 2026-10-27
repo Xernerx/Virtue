@@ -8,12 +8,23 @@ import { config } from 'dotenv';
 
 config({ quiet: true });
 
+export const isDev = process.env.NODE_ENV?.toUpperCase() === 'DEVELOPMENT' || process.env.ENVIRONMENT?.toUpperCase() === 'DEVELOPMENT';
+
 export class WebSocket extends XernerxWebsocket {
 	constructor() {
 		super({
-			token: process.env.WS_TOKEN!,
-			dev: process.env.NODE_ENV == 'DEVELOPMENT',
+			token: (process.env.WS_TOKEN || process.env.API_TOKEN)!,
+			dev: isDev,
 		});
+	}
+
+	override async connect() {
+		const rawWs = (this as any).ws;
+		if (rawWs && rawWs.readyState !== 1 && rawWs.readyState !== 0) {
+			(this as any).ready = false;
+			(this as any).connecting = null;
+		}
+		return super.connect();
 	}
 }
 

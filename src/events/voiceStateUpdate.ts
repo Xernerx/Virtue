@@ -40,10 +40,22 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 	private async getOrCreate(service: string, action: string, query: any) {
 		const ws = (this.client as any).websocket;
 
-		let data = await ws.get(service, action, query).catch(() => null);
+		let getFailed = false;
+		let data = await ws.get(service, action, query).catch((err: unknown) => {
+			getFailed = true;
+			console.error(`[WS] GET ${service}/${action} failed:`, (err as Error)?.message || err);
+			return null;
+		});
 
 		if (!data) {
-			data = await ws.create(service, action, query).catch(() => null);
+			data = await ws.create(service, action, query).catch((err: unknown) => {
+				console.error(`[WS] POST ${service}/${action} failed:`, (err as Error)?.message || err);
+				return null;
+			});
+		}
+
+		if (!data && !getFailed) {
+			data = await ws.update(service, action, query).catch(() => null);
 		}
 
 		return data ?? null;
@@ -91,7 +103,7 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 		const userId = state.member.id;
 		const guildId = state.guild.id;
 
-		const [user, member, voice, guild] = await Promise.all([
+		const [user, member, voice, rawGuild] = await Promise.all([
 			this.getOrCreate('xernerx', 'levels', {
 				ownerId: userId,
 			}),
@@ -111,7 +123,9 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 			}),
 		]);
 
-		if (!user || !member || !voice || !guild) return;
+		if (!user && !member && !voice) return;
+
+		const guild = rawGuild || { id: guildId, mode: 'balanced', levelUp: true };
 
 		const mode = guild.mode || 'balanced';
 		const cooldown = cooldowns[mode as keyof typeof cooldowns] || cooldowns.balanced;
@@ -132,10 +146,10 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 		const ws = (this.client as any).websocket;
 
 		// ===== GLOBAL =====
-		let userLevel = user.level ?? 0;
-		let userXp = user.xp ?? 0;
+		let userLevel = user?.level ?? 0;
+		let userXp = user?.xp ?? 0;
 
-		if (!bypassGlobal) {
+		if (user && !bypassGlobal) {
 			userXp += globalXpGain;
 
 			while (userXp >= calculateLevel('balanced', userLevel)) {
@@ -151,46 +165,51 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 		}
 
 		// ===== GUILD LEVEL (UNIFIED) & VOICE LEVEL =====
-		let memberLevel = member.level ?? 0;
-		let memberXp = member.xp ?? 0;
+		const effectiveMember = member || voice;
+		let memberLevel = effectiveMember?.level ?? 0;
+		let memberXp = effectiveMember?.xp ?? 0;
 
-		let voiceLevel = voice.level ?? 0;
-		let voiceXp = voice.xp ?? 0;
-		const timeSpent = (voice.timeSpent ?? 0) + elapsedSeconds;
+		let voiceLevel = voice?.level ?? 0;
+		let voiceXp = voice?.xp ?? 0;
+		const timeSpent = (voice?.timeSpent ?? 0) + elapsedSeconds;
 
 		const levelRoles: Array<{ level: number; roleId: string }> =
 			Array.isArray(guild.levelRoles) && guild.levelRoles.length > 0 ? guild.levelRoles : Array.isArray(guild.roles?.levels) ? guild.roles.levels : [];
 
 		if (!bypassGuild) {
-			memberXp += guildXpGain;
-			voiceXp += guildXpGain;
+			if (effectiveMember) memberXp += guildXpGain;
+			if (voice) voiceXp += guildXpGain;
 
-			while (voiceXp >= calculateLevel(mode, voiceLevel)) {
-				voiceXp -= calculateLevel(mode, voiceLevel);
-				voiceLevel++;
+			if (voice) {
+				while (voiceXp >= calculateLevel(mode, voiceLevel)) {
+					voiceXp -= calculateLevel(mode, voiceLevel);
+					voiceLevel++;
+				}
 			}
 
-			while (memberXp >= calculateLevel(mode, memberLevel)) {
-				memberXp -= calculateLevel(mode, memberLevel);
-				memberLevel++;
+			if (effectiveMember) {
+				while (memberXp >= calculateLevel(mode, memberLevel)) {
+					memberXp -= calculateLevel(mode, memberLevel);
+					memberLevel++;
 
-				if (guild.levelUp && guild.levelChannel) {
-					const unlockedAtLevel = levelRoles.filter((lr) => Number(lr?.level) === memberLevel && lr?.roleId);
-					const highestUnlocked = [...levelRoles].filter((lr) => Number(lr?.level) <= memberLevel && lr?.roleId).sort((a, b) => Number(b.level) - Number(a.level))[0];
-					const roleMention = unlockedAtLevel.length > 0 ? unlockedAtLevel.map((lr) => `<@&${lr.roleId}>`).join(', ') : highestUnlocked ? `<@&${highestUnlocked.roleId}>` : '';
+					if (guild.levelUp && guild.levelChannel) {
+						const unlockedAtLevel = levelRoles.filter((lr) => Number(lr?.level) === memberLevel && lr?.roleId);
+						const highestUnlocked = [...levelRoles].filter((lr) => Number(lr?.level) <= memberLevel && lr?.roleId).sort((a, b) => Number(b.level) - Number(a.level))[0];
+						const roleMention = unlockedAtLevel.length > 0 ? unlockedAtLevel.map((lr) => `<@&${lr.roleId}>`).join(', ') : highestUnlocked ? `<@&${highestUnlocked.roleId}>` : '';
 
-					const msg = (guild.levelMessage || '[@mention] reached level [@level] :tada:!')
-						.replace(/\[@mention\]|\{user\}/gi, `${state.member.user}`)
-						.replace(/\[@username\]/gi, state.member.user.globalName || state.member.user.username)
-						.replace(/\[@nickname\]/gi, state.member.nickname || state.member.user.globalName || state.member.user.username)
-						.replace(/\[@level\]|\{level\}/gi, String(memberLevel))
-						.replace(/\[@role\]|\{role\}/gi, roleMention)
-						.replace(/\[@server\]/gi, state.guild.name);
+						const msg = (guild.levelMessage || '[@mention] reached level [@level] :tada:!')
+							.replace(/\[@mention\]|\{user\}/gi, `${state.member.user}`)
+							.replace(/\[@username\]/gi, state.member.user.globalName || state.member.user.username)
+							.replace(/\[@nickname\]/gi, state.member.nickname || state.member.user.globalName || state.member.user.username)
+							.replace(/\[@level\]|\{level\}/gi, String(memberLevel))
+							.replace(/\[@role\]|\{role\}/gi, roleMention)
+							.replace(/\[@server\]/gi, state.guild.name);
 
-					await this.client.channels
-						.fetch(guild.levelChannel)
-						.then((c: any) => c?.send(msg))
-						.catch(() => null);
+						await this.client.channels
+							.fetch(guild.levelChannel)
+							.then((c: any) => c?.send(msg))
+							.catch(() => null);
+					}
 				}
 			}
 		}
@@ -210,32 +229,57 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 			}
 		}
 
-		await Promise.all([
-			ws
-				.update('xernerx', 'levels', {
-					ownerId: userId,
-					level: userLevel,
-					xp: userXp,
-				})
-				.catch(() => null),
-			ws
-				.update('virtue', 'levels', {
-					id: userId,
-					guild: guildId,
-					level: memberLevel,
-					xp: memberXp,
-				})
-				.catch(() => null),
-			ws
-				.update('virtue', 'voice', {
-					id: userId,
-					guild: guildId,
-					level: voiceLevel,
-					xp: voiceXp,
-					timeSpent,
-				})
-				.catch(() => null),
-		]);
+		const updates: Promise<any>[] = [];
+
+		if (user) {
+			updates.push(
+				ws
+					.update('xernerx', 'levels', {
+						ownerId: userId,
+						level: userLevel,
+						xp: userXp,
+					})
+					.catch((err: unknown) => {
+						console.error('[WS] PATCH xernerx/levels failed:', (err as Error)?.message || err);
+						return null;
+					})
+			);
+		}
+
+		if (member) {
+			updates.push(
+				ws
+					.update('virtue', 'levels', {
+						id: userId,
+						guild: guildId,
+						level: memberLevel,
+						xp: memberXp,
+					})
+					.catch((err: unknown) => {
+						console.error('[WS] PATCH virtue/levels failed:', (err as Error)?.message || err);
+						return null;
+					})
+			);
+		}
+
+		if (voice) {
+			updates.push(
+				ws
+					.update('virtue', 'voice', {
+						id: userId,
+						guild: guildId,
+						level: voiceLevel,
+						xp: voiceXp,
+						timeSpent,
+					})
+					.catch((err: unknown) => {
+						console.error('[WS] PATCH virtue/voice failed:', (err as Error)?.message || err);
+						return null;
+					})
+			);
+		}
+
+		await Promise.all(updates);
 	}
 
 	override async run(oldState: VoiceState, newState: VoiceState) {
