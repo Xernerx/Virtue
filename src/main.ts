@@ -39,7 +39,7 @@ export class Client extends XernerxClient {
 			token: process.env.TOKEN as string,
 			guildId: '784094726432489522',
 			owners: '482513687417061376',
-			global: process.env.NODE_ENV != 'DEVELOPMENT',
+			global: !isDev,
 		});
 
 		this.modules.eventHandler.loadEvents({
@@ -53,6 +53,11 @@ export class Client extends XernerxClient {
 		this.modules.extensionHandler.loadExtensions(
 			new XernerxCommands(this, {
 				token: process.env.API_TOKEN!,
+				dev: isDev,
+			}),
+			new XernerxStats(this, {
+				token: process.env.API_TOKEN!,
+				dev: isDev,
 			})
 		);
 
@@ -65,5 +70,3 @@ export class Client extends XernerxClient {
 await websocket.connect().catch(() => null);
 
 export const client = new Client();
-
-new XernerxStats(client, { token: process.env.API_TOKEN! });

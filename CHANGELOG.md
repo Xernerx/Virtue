@@ -1,5 +1,11 @@
 <!-- @format -->
 
+## 2.1.2
+
+### Patch Changes
+
+- Update @xernerx/* dependencies (@xernerx/commands@^0.2.6, @xernerx/framework@^1.1.1, @xernerx/stats@^1.0.14, @xernerx/terminal@^1.1.15, @xernerx/websocket@^0.4.16) and register XernerxStats via extensionHandler.loadExtensions.
+
 ## 2.1.1
 
 ### Patch Changes
