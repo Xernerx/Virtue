@@ -1,5 +1,11 @@
 <!-- @format -->
 
+## 2.1.4
+
+### Patch Changes
+
+- updated commands dependency
+
 ## 2.1.3
 
 ### Patch Changes

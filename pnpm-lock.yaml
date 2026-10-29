@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@xernerx/commands':
-        specifier: ^0.2.6
-        version: 0.2.6(@xernerx/framework@1.1.1(@discordjs/core@2.2.2)(discord.js@14.27.0))(discord.js@14.27.0)
+        specifier: ^0.2.7
+        version: 0.2.7(@xernerx/framework@1.1.1(@discordjs/core@2.2.2)(discord.js@14.27.0))(discord.js@14.27.0)
       '@xernerx/framework':
         specifier: ^1.1.1
         version: 1.1.1(@discordjs/core@2.2.2)(discord.js@14.27.0)
@@ -188,8 +188,8 @@ packages:
     resolution: {integrity: sha512-Xfe6rpCTxSxfbswi/W/Pz7zp1WWSNn4A0eW4mLkQUewCrXXtMj31lCg+iQyTkh/CkusZSq9eDflu7tjEDXUY6g==}
     engines: {node: '>=v14.0.0', npm: '>=7.0.0'}
 
-  '@xernerx/commands@0.2.6':
-    resolution: {integrity: sha512-AqXvarp7EvghnIJ0L2RqDb/zcOJGnt8Clzd2pvyzsLBpJBZ6j2GqKWyQN0i9QcV2OZg+a+EhHBqQ4+RpyR7dMA==}
+  '@xernerx/commands@0.2.7':
+    resolution: {integrity: sha512-RU/ctatb1l9bYbDlcW0S3MxJ2gPXTGNmrdWEkvmkFovvLnNTE7KdS80ONo6MHqueooeD5Nk2TrRWhAy8GVM0xQ==}
     engines: {node: '>=24'}
     peerDependencies:
       '@xernerx/framework': '>=1.0.0'
@@ -229,8 +229,8 @@ packages:
     resolution: {integrity: sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==}
     engines: {node: '>=8'}
 
-  ansi-regex@6.4.0:
-    resolution: {integrity: sha512-KzTVk2tCWAHtYrvvvaP8bJKJq2pVinhLcGEQdtLIYPbmNGNyYe8QwNaTUYQp2J7/vIsUKt5QCqAfUkYyG9DkOw==}
+  ansi-regex@6.5.0:
+    resolution: {integrity: sha512-zhvbbbdt1kbw7EJ9OQoxmQcuaNR9P5kTj7e/YdmOSU10aHWbycofJxA6jKfoEy3vlLdctOF9ZHaxLtmSm998wQ==}
     engines: {node: '>=12'}
 
   ansi-styles@6.2.3:
@@ -753,7 +753,7 @@ snapshots:
 
   '@vladfrangu/async_event_emitter@2.4.7': {}
 
-  '@xernerx/commands@0.2.6(@xernerx/framework@1.1.1(@discordjs/core@2.2.2)(discord.js@14.27.0))(discord.js@14.27.0)':
+  '@xernerx/commands@0.2.7(@xernerx/framework@1.1.1(@discordjs/core@2.2.2)(discord.js@14.27.0))(discord.js@14.27.0)':
     dependencies:
       '@xernerx/extension-builder': 0.1.0
       '@xernerx/framework': 1.1.1(@discordjs/core@2.2.2)(discord.js@14.27.0)
@@ -796,7 +796,7 @@ snapshots:
 
   ansi-regex@5.0.1: {}
 
-  ansi-regex@6.4.0: {}
+  ansi-regex@6.5.0: {}
 
   ansi-styles@6.2.3: {}
 
@@ -977,7 +977,7 @@ snapshots:
 
   strip-ansi@7.2.0:
     dependencies:
-      ansi-regex: 6.4.0
+      ansi-regex: 6.5.0
 
   supports-color@7.2.0:
     dependencies:
