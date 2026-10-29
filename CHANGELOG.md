@@ -1,5 +1,11 @@
 <!-- @format -->
 
+## 2.1.3
+
+### Patch Changes
+
+- Added handles to message commands
+
 ## 2.1.2
 
 ### Patch Changes

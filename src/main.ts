@@ -50,6 +50,12 @@ export class Client extends XernerxClient {
 			directory: 'dist/commands/slash',
 		});
 
+		this.modules.commandHandler.loadMessageCommands({
+			directory: 'dist/commands/message',
+			handleEdits: true,
+			handleDeletions: true,
+		});
+
 		this.modules.extensionHandler.loadExtensions(
 			new XernerxCommands(this, {
 				token: process.env.API_TOKEN!,
