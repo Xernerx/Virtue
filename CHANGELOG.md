@@ -1,5 +1,11 @@
 <!-- @format -->
 
+## 2.2.1
+
+### Patch Changes
+
+- Fixed font issues on attachments
+
 ## 2.2.0
 
 ### Minor Changes

@@ -5,16 +5,14 @@ import { XernerxClient } from '@xernerx/framework';
 import { XernerxStats } from '@xernerx/stats';
 import { XernerxWebsocket } from '@xernerx/websocket';
 import { config } from 'dotenv';
+import fs from 'fs';
 
 config({ quiet: true });
-
-export const isDev = process.env.NODE_ENV?.toUpperCase() === 'DEVELOPMENT' || process.env.ENVIRONMENT?.toUpperCase() === 'DEVELOPMENT';
 
 export class WebSocket extends XernerxWebsocket {
 	constructor() {
 		super({
 			token: (process.env.WS_TOKEN || process.env.API_TOKEN)!,
-			dev: isDev,
 		});
 	}
 
@@ -42,7 +40,7 @@ export class Client extends XernerxClient {
 			token: process.env.TOKEN as string,
 			guildId: '784094726432489522',
 			owners: '482513687417061376',
-			global: !isDev,
+			global: process.env.NODE_ENV != 'DEVELOPMENT',
 		});
 
 		this.modules.eventHandler.loadEvents({
@@ -57,6 +55,8 @@ export class Client extends XernerxClient {
 			directory: 'dist/commands/context',
 		});
 
+		fs.mkdirSync('dist/commands/message', { recursive: true });
+
 		this.modules.commandHandler.loadMessageCommands({
 			directory: 'dist/commands/message',
 			handleEdits: true,
@@ -66,11 +66,9 @@ export class Client extends XernerxClient {
 		this.modules.extensionHandler.loadExtensions(
 			new XernerxCommands(this, {
 				token: process.env.API_TOKEN!,
-				dev: isDev,
 			}),
 			new XernerxStats(this, {
 				token: process.env.API_TOKEN!,
-				dev: isDev,
 			})
 		);
 

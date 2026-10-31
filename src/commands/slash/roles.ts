@@ -3,7 +3,7 @@
 import { SlashCommandBuilder, type SlashCommandOptions } from '@xernerx/framework';
 import { AttachmentBuilder, EmbedBuilder } from 'discord.js';
 import { renderRolesCardPng, resolveUserAccent, type LevelRoleSummary } from '../../lib/levelCard.js';
-import { extractGuildLevelRoles } from '../../lib/levels.js';
+import { extractGuildLevelRoles, resolveUnifiedServerProgress } from '../../lib/levels.js';
 
 export default class RolesCommand extends SlashCommandBuilder {
 	constructor() {
@@ -30,8 +30,8 @@ export default class RolesCommand extends SlashCommandBuilder {
 			guildId ? ws.get('virtue', 'voice', { id: interaction.user.id, guild: guildId }).catch(() => null) : Promise.resolve(null),
 		]);
 
-		const effectiveMember = member || text || voice;
-		const serverLevel = Number(effectiveMember?.level) || 0;
+		const resolvedServer = resolveUnifiedServerProgress(member, text, voice);
+		const serverLevel = resolvedServer.level;
 		const textLevel = Number(text?.level) || 0;
 		const voiceLevel = Number(voice?.level) || 0;
 

@@ -10,6 +10,7 @@ import {
 	getMemberServerMultiplier,
 	isChannelFilteredOut,
 	resolveGlobalXpMultiplier,
+	resolveUnifiedServerProgress,
 	syncMemberLevelRoles,
 } from '../lib/levels.js';
 
@@ -184,8 +185,9 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 
 		// ===== GUILD LEVEL (UNIFIED) & VOICE LEVEL =====
 		const effectiveMember = member || voice;
-		let memberLevel = effectiveMember?.level ?? 0;
-		let memberXp = effectiveMember?.xp ?? 0;
+		const resolvedServer = resolveUnifiedServerProgress(member, undefined, voice);
+		let memberLevel = resolvedServer.level;
+		let memberXp = resolvedServer.xp;
 
 		let voiceLevel = voice?.level ?? 0;
 		let voiceXp = voice?.xp ?? 0;

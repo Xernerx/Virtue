@@ -1,8 +1,81 @@
 /** @format */
 
+import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Resvg } from '@resvg/resvg-js';
 import sharp from 'sharp';
 
-const isDev = process.env.NODE_ENV?.toUpperCase() === 'DEVELOPMENT' || process.env.ENVIRONMENT?.toUpperCase() === 'DEVELOPMENT';
+function initBundledFonts(): string[] {
+	const candidateDirs = [resolve(fileURLToPath(new URL('../../assets/fonts', import.meta.url))), resolve(process.cwd(), 'assets/fonts')];
+	const fontsDir = candidateDirs.find((d) => existsSync(d));
+	if (!fontsDir) return [];
+
+	let fontFiles: string[] = [];
+	try {
+		fontFiles = readdirSync(fontsDir)
+			.filter((f) => /\.(ttf|otf)$/i.test(f))
+			.sort((a, b) => {
+				const score = (name: string) => (name.toLowerCase().startsWith('fredoka') ? 0 : name.toLowerCase().startsWith('segoe') ? 1 : 2);
+				return score(a) - score(b) || a.localeCompare(b);
+			})
+			.map((f) => join(fontsDir, f));
+	} catch {
+		return [];
+	}
+
+	if (fontFiles.length === 0) return [];
+
+	// Also seed user font dirs & fontconfig for sharp/librsvg fallback on headless Linux containers
+	try {
+		const home = homedir();
+		for (const sub of ['.fonts', '.local/share/fonts']) {
+			const targetDir = join(home, sub);
+			mkdirSync(targetDir, { recursive: true });
+			for (const src of fontFiles) {
+				const dest = join(targetDir, src.split(/[\\/]/).pop()!);
+				if (!existsSync(dest)) copyFileSync(src, dest);
+			}
+		}
+	} catch {}
+
+	try {
+		const cacheDir = join(tmpdir(), 'virtue-fontconfig-cache');
+		mkdirSync(cacheDir, { recursive: true });
+		const confPath = join(tmpdir(), 'virtue-fonts.conf');
+		const escapedDir = fontsDir.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+		const escapedCache = cacheDir.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+		writeFileSync(
+			confPath,
+			`<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n<fontconfig>\n\t<dir>${escapedDir}</dir>\n\t<dir>/usr/share/fonts</dir>\n\t<dir>/usr/local/share/fonts</dir>\n\t<cachedir>${escapedCache}</cachedir>\n</fontconfig>\n`,
+			'utf8'
+		);
+		if (!process.env.FONTCONFIG_FILE) process.env.FONTCONFIG_FILE = confPath;
+		if (!process.env.PANGOCAIRO_BACKEND) process.env.PANGOCAIRO_BACKEND = 'fc';
+	} catch {}
+
+	return fontFiles;
+}
+
+const BUNDLED_FONT_FILES = initBundledFonts();
+
+async function renderSvgToPng(svg: string): Promise<Buffer> {
+	try {
+		const resvg = new Resvg(svg, {
+			font: {
+				fontFiles: BUNDLED_FONT_FILES,
+				loadSystemFonts: BUNDLED_FONT_FILES.length === 0,
+				defaultFontFamily: 'Fredoka',
+				sansSerifFamily: 'Fredoka',
+				monospaceFamily: 'Consolas',
+			},
+		});
+		return Buffer.from(resvg.render().asPng());
+	} catch {
+		return await sharp(Buffer.from(svg)).png().toBuffer();
+	}
+}
 
 export const DEFAULT_XERNERX_COLOR = 0x8b7cf6;
 export const DEFAULT_XERNERX_HEX = '#8b7cf6';
@@ -76,7 +149,7 @@ export async function resolveUserAccent(ws: any, targetUserId: string, invokerUs
 		} catch {}
 	}
 
-	const apiBase = isDev ? 'http://localhost:4000' : 'https://api.xernerx.com';
+	const apiBase = 'https://api.xernerx.com';
 	for (const uid of candidateIds) {
 		try {
 			const res = await fetch(`${apiBase}/core/users/${uid}`);
@@ -174,12 +247,12 @@ export async function renderLevelCardPng(opts: LevelCardOptions): Promise<Buffer
 			<rect width="${cardW}" height="${cardH}" rx="22" fill="${cardBg}" fill-opacity="${isLight ? '0.92' : '0.88'}" stroke="${cardStroke}" stroke-opacity="0.09" stroke-width="1.5" />
 			<rect x="0" y="22" width="4" height="32" rx="2" fill="${accent}" />
 
-			<text x="22" y="32" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.2">${safeTitle}</text>
-			<text x="22" y="53" fill="${textSecondary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="600">${safeSub}</text>
+			<text x="22" y="32" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.2">${safeTitle}</text>
+			<text x="22" y="53" fill="${textSecondary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="600">${safeSub}</text>
 
 			<g transform="translate(${cardW - 22}, 18)">
 				<rect x="-112" y="0" width="112" height="36" rx="12" fill="${accent}" fill-opacity="0.15" stroke="${accent}" stroke-opacity="0.38" stroke-width="1.2" />
-				<text x="-56" y="23" text-anchor="middle" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="14" font-weight="800">Lv. ${track.level} → ${track.level + 1}</text>
+				<text x="-56" y="23" text-anchor="middle" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="14" font-weight="700">Lv. ${track.level} &gt; ${track.level + 1}</text>
 			</g>
 
 			<rect x="${barX}" y="${barY}" width="${barW}" height="${barH}" rx="7" fill="${trackBg}" stroke="${cardStroke}" stroke-opacity="0.06" />
@@ -188,13 +261,13 @@ export async function renderLevelCardPng(opts: LevelCardOptions): Promise<Buffer
 				<rect x="${barX}" y="${barY}" width="${barW}" height="${barH}" rx="7" />
 			</clipPath>
 
-			<text x="22" y="114" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="700">${xpText}</text>
+			<text x="22" y="114" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="700">${xpText}</text>
 			${
 				safeBadge
-					? `<text x="${Math.round(cardW / 2)}" y="114" text-anchor="middle" fill="${textSecondary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="700">${safeBadge}</text>`
+					? `<text x="${Math.round(cardW / 2)}" y="114" text-anchor="middle" fill="${textSecondary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="700">${safeBadge}</text>`
 					: ''
 			}
-			<text x="${cardW - 22}" y="114" text-anchor="end" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="800">${pctText}</text>
+			<text x="${cardW - 22}" y="114" text-anchor="end" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="800">${pctText}</text>
 		</g>`;
 	};
 
@@ -209,20 +282,20 @@ export async function renderLevelCardPng(opts: LevelCardOptions): Promise<Buffer
 		return `
 		<g transform="translate(32, 464)">
 			<rect width="856" height="54" rx="18" fill="${cardBg}" fill-opacity="${isLight ? '0.92' : '0.88'}" stroke="${accent}" stroke-opacity="0.28" stroke-width="1.2" />
-			<text x="22" y="32" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.2">LEVEL ROLES</text>
+			<text x="22" y="32" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.2">LEVEL ROLES</text>
 
 			<g transform="translate(148, 13)">
 				<rect width="328" height="28" rx="9" fill="${trackBg}" />
 				<circle cx="16" cy="14" r="5" fill="${escapeXml(currentColor)}" />
-				<text x="28" y="18.5" fill="${textSecondary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="700">CURRENT:</text>
-				<text x="94" y="18.5" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="800">${escapeXml(currentLabel)}</text>
+				<text x="28" y="18.5" fill="${textSecondary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="700">CURRENT:</text>
+				<text x="94" y="18.5" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="800">${escapeXml(currentLabel)}</text>
 			</g>
 
 			<g transform="translate(496, 13)">
 				<rect width="340" height="28" rx="9" fill="${trackBg}" />
 				<circle cx="16" cy="14" r="5" fill="${escapeXml(nextColor)}" />
-				<text x="28" y="18.5" fill="${textSecondary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="700">NEXT:</text>
-				<text x="72" y="18.5" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="800">${escapeXml(nextLabel)}</text>
+				<text x="28" y="18.5" fill="${textSecondary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="700">NEXT:</text>
+				<text x="72" y="18.5" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="800">${escapeXml(nextLabel)}</text>
 			</g>
 		</g>`;
 	};
@@ -260,18 +333,18 @@ export async function renderLevelCardPng(opts: LevelCardOptions): Promise<Buffer
 	${
 		avatarDataUri
 			? `<image href="${avatarDataUri}" x="32" y="28" width="92" height="92" preserveAspectRatio="xMidYMid slice" clip-path="url(#avatarClip)" />`
-			: `<text x="78" y="86" text-anchor="middle" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="36" font-weight="800">${initial}</text>`
+			: `<text x="78" y="86" text-anchor="middle" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="36" font-weight="800">${initial}</text>`
 	}
 
 	<!-- User Identity -->
-	<text x="144" y="50" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.8">XERNERX • VIRTUE PROGRESSION</text>
-	<text x="144" y="84" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="30" font-weight="800">${safeDisplayName}</text>
-	<text x="144" y="109" fill="${textSecondary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="15" font-weight="600">${safeHandle}</text>
+	<text x="144" y="50" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.8">XERNERX • VIRTUE PROGRESSION</text>
+	<text x="144" y="84" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="30" font-weight="800">${safeDisplayName}</text>
+	<text x="144" y="109" fill="${textSecondary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="15" font-weight="600">${safeHandle}</text>
 
 	<!-- Server Pill (Top Right) -->
 	<g transform="translate(${width - 32}, 54)">
 		<rect x="-240" y="0" width="240" height="40" rx="14" fill="${cardBg}" stroke="${cardStroke}" stroke-opacity="0.1" stroke-width="1.2" />
-		<text x="-120" y="25" text-anchor="middle" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="13.5" font-weight="700">${safeGuild}</text>
+		<text x="-120" y="25" text-anchor="middle" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="13.5" font-weight="700">${safeGuild}</text>
 	</g>
 
 	<!-- Divider -->
@@ -287,7 +360,7 @@ export async function renderLevelCardPng(opts: LevelCardOptions): Promise<Buffer
 	${renderRolesFooter()}
 </svg>`;
 
-	return await sharp(Buffer.from(svg)).png().toBuffer();
+	return await renderSvgToPng(svg);
 }
 
 export interface LeaderboardEntryData {
@@ -358,13 +431,13 @@ export async function renderLeaderboardCardPng(opts: LeaderboardCardOptions): Pr
 			${entry.isCaller ? `<rect x="0" y="14" width="4" height="34" rx="2" fill="${accent}" />` : ''}
 
 			<rect x="16" y="13" width="48" height="36" rx="11" fill="${rankColor}" fill-opacity="0.16" stroke="${rankColor}" stroke-opacity="0.45" stroke-width="1.2" />
-			<text x="40" y="36" text-anchor="middle" fill="${rankColor}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="14" font-weight="800">#${entry.rank}</text>
+			<text x="40" y="36" text-anchor="middle" fill="${rankColor}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="14" font-weight="800">#${entry.rank}</text>
 
-			<text x="80" y="28" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="15.5" font-weight="800">${safeName}</text>
-			<text x="80" y="47" fill="${textSecondary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="600">${safeHandle}</text>
+			<text x="80" y="28" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="15.5" font-weight="800">${safeName}</text>
+			<text x="80" y="47" fill="${textSecondary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="600">${safeHandle}</text>
 
-			<text x="${barX}" y="26" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="12.5" font-weight="700">${safeStat}</text>
-			<text x="${barX + barW}" y="26" text-anchor="end" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="12.5" font-weight="800">${clampedPct.toFixed(1)}%</text>
+			<text x="${barX}" y="26" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="12.5" font-weight="700">${safeStat}</text>
+			<text x="${barX + barW}" y="26" text-anchor="end" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="12.5" font-weight="800">${clampedPct.toFixed(1)}%</text>
 
 			<rect x="${barX}" y="36" width="${barW}" height="10" rx="5" fill="${trackBg}" />
 			${fillW > 0 ? `<rect x="${barX}" y="36" width="${fillW}" height="10" rx="5" fill="${accent}" clip-path="url(#lb-clip-${idx})" />` : ''}
@@ -373,7 +446,7 @@ export async function renderLeaderboardCardPng(opts: LeaderboardCardOptions): Pr
 			</clipPath>
 
 			<rect x="748" y="13" width="92" height="36" rx="11" fill="${accent}" fill-opacity="0.15" stroke="${accent}" stroke-opacity="0.4" stroke-width="1.2" />
-			<text x="794" y="36" text-anchor="middle" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="13.5" font-weight="800">Lv. ${entry.level}</text>
+			<text x="794" y="36" text-anchor="middle" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="13.5" font-weight="800">Lv. ${entry.level}</text>
 		</g>`;
 	};
 
@@ -412,16 +485,16 @@ export async function renderLeaderboardCardPng(opts: LeaderboardCardOptions): Pr
 	${
 		iconDataUri
 			? `<image href="${iconDataUri}" x="32" y="28" width="92" height="92" preserveAspectRatio="xMidYMid slice" clip-path="url(#lbIconClip)" />`
-			: `<text x="78" y="86" text-anchor="middle" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="36" font-weight="800">${initial}</text>`
+			: `<text x="78" y="86" text-anchor="middle" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="36" font-weight="800">${initial}</text>`
 	}
 
-	<text x="144" y="50" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.8">XERNERX • VIRTUE LEADERBOARD</text>
-	<text x="144" y="84" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="30" font-weight="800">${safeTitle}</text>
-	<text x="144" y="109" fill="${textSecondary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="14.5" font-weight="600">${safeSubtitle}</text>
+	<text x="144" y="50" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.8">XERNERX • VIRTUE LEADERBOARD</text>
+	<text x="144" y="84" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="30" font-weight="800">${safeTitle}</text>
+	<text x="144" y="109" fill="${textSecondary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="14.5" font-weight="600">${safeSubtitle}</text>
 
 	<g transform="translate(${width - 32}, 54)">
 		<rect x="-240" y="0" width="240" height="40" rx="14" fill="${trackBg}" stroke="${accent}" stroke-opacity="0.4" stroke-width="1.2" />
-		<text x="-120" y="25" text-anchor="middle" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="800">${safeRankPill}</text>
+		<text x="-120" y="25" text-anchor="middle" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="800">${safeRankPill}</text>
 	</g>
 
 	<line x1="32" y1="140" x2="${width - 32}" y2="140" stroke="${cardStroke}" stroke-opacity="0.08" stroke-width="1.5" />
@@ -429,7 +502,7 @@ export async function renderLeaderboardCardPng(opts: LeaderboardCardOptions): Pr
 	${entriesSvg}
 </svg>`;
 
-	return await sharp(Buffer.from(svg)).png().toBuffer();
+	return await renderSvgToPng(svg);
 }
 
 export interface RolesCardOptions {
@@ -487,11 +560,11 @@ export async function renderRolesCardPng(opts: RolesCardOptions): Promise<Buffer
 			<rect x="0" y="14" width="4" height="34" rx="2" fill="${roleColor}" />
 
 			<circle cx="28" cy="24" r="7" fill="${roleColor}" />
-			<text x="44" y="29" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="15.5" font-weight="800">${escapeXml(truncateText(`@${role.name}`, 30))}</text>
-			<text x="22" y="48" fill="${textSecondary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="700">Requires ${trackLabel} ${role.level}</text>
+			<text x="44" y="29" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="15.5" font-weight="800">${escapeXml(truncateText(`@${role.name}`, 30))}</text>
+			<text x="22" y="48" fill="${textSecondary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="700">Requires ${trackLabel} ${role.level}</text>
 
-			<text x="${barX}" y="26" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="12.5" font-weight="700">${trackShort} ${currentLvl} / ${role.level}</text>
-			<text x="${barX + barW}" y="26" text-anchor="end" fill="${statusColor}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="12.5" font-weight="800">${pct}%</text>
+			<text x="${barX}" y="26" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="12.5" font-weight="700">${trackShort} ${currentLvl} / ${role.level}</text>
+			<text x="${barX + barW}" y="26" text-anchor="end" fill="${statusColor}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="12.5" font-weight="800">${pct}%</text>
 
 			<rect x="${barX}" y="36" width="${barW}" height="10" rx="5" fill="${trackBg}" />
 			${fillW > 0 ? `<rect x="${barX}" y="36" width="${fillW}" height="10" rx="5" fill="${unlocked ? '#34d399' : roleColor}" clip-path="url(#role-clip-${idx})" />` : ''}
@@ -500,7 +573,7 @@ export async function renderRolesCardPng(opts: RolesCardOptions): Promise<Buffer
 			</clipPath>
 
 			<rect x="724" y="13" width="116" height="36" rx="11" fill="${statusColor}" fill-opacity="0.15" stroke="${statusColor}" stroke-opacity="0.4" stroke-width="1.2" />
-			<text x="782" y="36" text-anchor="middle" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="800">${escapeXml(statusText)}</text>
+			<text x="782" y="36" text-anchor="middle" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="800">${escapeXml(statusText)}</text>
 		</g>`;
 	};
 
@@ -539,16 +612,16 @@ export async function renderRolesCardPng(opts: RolesCardOptions): Promise<Buffer
 	${
 		iconDataUri
 			? `<image href="${iconDataUri}" x="32" y="28" width="92" height="92" preserveAspectRatio="xMidYMid slice" clip-path="url(#roleIconClip)" />`
-			: `<text x="78" y="86" text-anchor="middle" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="36" font-weight="800">${initial}</text>`
+			: `<text x="78" y="86" text-anchor="middle" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="36" font-weight="800">${initial}</text>`
 	}
 
-	<text x="144" y="50" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.8">XERNERX • VIRTUE LEVEL ROLES</text>
-	<text x="144" y="84" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="30" font-weight="800">${safeGuild}</text>
-	<text x="144" y="109" fill="${textSecondary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="14.5" font-weight="600">Server role milestones unlocked automatically on level-up</text>
+	<text x="144" y="50" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.8">XERNERX • VIRTUE LEVEL ROLES</text>
+	<text x="144" y="84" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="30" font-weight="800">${safeGuild}</text>
+	<text x="144" y="109" fill="${textSecondary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="14.5" font-weight="600">Server role milestones unlocked automatically on level-up</text>
 
 	<g transform="translate(${width - 32}, 54)">
 		<rect x="-240" y="0" width="240" height="40" rx="14" fill="${trackBg}" stroke="${accent}" stroke-opacity="0.4" stroke-width="1.2" />
-		<text x="-120" y="25" text-anchor="middle" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="800">${safePill}</text>
+		<text x="-120" y="25" text-anchor="middle" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="800">${safePill}</text>
 	</g>
 
 	<line x1="32" y1="140" x2="${width - 32}" y2="140" stroke="${cardStroke}" stroke-opacity="0.08" stroke-width="1.5" />
@@ -556,7 +629,7 @@ export async function renderRolesCardPng(opts: RolesCardOptions): Promise<Buffer
 	${rolesSvg}
 </svg>`;
 
-	return await sharp(Buffer.from(svg)).png().toBuffer();
+	return await renderSvgToPng(svg);
 }
 
 export interface SetupCardOptions {
@@ -610,8 +683,8 @@ export async function renderSetupCardPng(opts: SetupCardOptions): Promise<Buffer
 				const rowY = 64 + i * 24;
 				const valColor = r.color ? escapeXml(r.color) : textPrimary;
 				return `
-				<text x="22" y="${rowY}" fill="${textSecondary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="600">${escapeXml(r.label)}</text>
-				<text x="${cardW - 22}" y="${rowY}" text-anchor="end" fill="${valColor}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="800">${escapeXml(truncateText(r.value, 28))}</text>`;
+				<text x="22" y="${rowY}" fill="${textSecondary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="600">${escapeXml(r.label)}</text>
+				<text x="${cardW - 22}" y="${rowY}" text-anchor="end" fill="${valColor}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="800">${escapeXml(truncateText(r.value, 28))}</text>`;
 			})
 			.join('');
 
@@ -620,11 +693,11 @@ export async function renderSetupCardPng(opts: SetupCardOptions): Promise<Buffer
 			<rect width="${cardW}" height="${cardH}" rx="22" fill="${cardBg}" fill-opacity="${isLight ? '0.92' : '0.88'}" stroke="${cardStroke}" stroke-opacity="0.09" stroke-width="1.5" />
 			<rect x="0" y="20" width="4" height="28" rx="2" fill="${accent}" />
 
-			<text x="22" y="34" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.2">${safeTitle}</text>
+			<text x="22" y="34" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.2">${safeTitle}</text>
 
 			<g transform="translate(${cardW - 22}, 14)">
 				<rect x="-126" y="0" width="126" height="30" rx="10" fill="${accent}" fill-opacity="0.15" stroke="${accent}" stroke-opacity="0.38" stroke-width="1.2" />
-				<text x="-63" y="19.5" text-anchor="middle" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="800">${safeBadge}</text>
+				<text x="-63" y="19.5" text-anchor="middle" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="12" font-weight="800">${safeBadge}</text>
 			</g>
 
 			<line x1="22" y1="46" x2="${cardW - 22}" y2="46" stroke="${cardStroke}" stroke-opacity="0.06" stroke-width="1" />
@@ -674,18 +747,18 @@ export async function renderSetupCardPng(opts: SetupCardOptions): Promise<Buffer
 	${
 		iconDataUri
 			? `<image href="${iconDataUri}" x="32" y="28" width="92" height="92" preserveAspectRatio="xMidYMid slice" clip-path="url(#iconClip)" />`
-			: `<text x="78" y="86" text-anchor="middle" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="36" font-weight="800">${initial}</text>`
+			: `<text x="78" y="86" text-anchor="middle" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="36" font-weight="800">${initial}</text>`
 	}
 
 	<!-- Header Info -->
-	<text x="144" y="50" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.8">XERNERX • VIRTUE CONFIGURATION</text>
-	<text x="144" y="84" fill="${textPrimary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="30" font-weight="800">${safeGuild}</text>
-	<text x="144" y="109" fill="${textSecondary}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="14.5" font-weight="600">Server roles &amp; channels synced</text>
+	<text x="144" y="50" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.8">XERNERX • VIRTUE CONFIGURATION</text>
+	<text x="144" y="84" fill="${textPrimary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="30" font-weight="800">${safeGuild}</text>
+	<text x="144" y="109" fill="${textSecondary}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="14.5" font-weight="600">Server roles &amp; channels synced</text>
 
 	<!-- Dashboard Pill (Top Right) -->
 	<g transform="translate(${width - 32}, 54)">
 		<rect x="-240" y="0" width="240" height="40" rx="14" fill="${trackBg}" stroke="${accent}" stroke-opacity="0.4" stroke-width="1.2" />
-		<text x="-120" y="25" text-anchor="middle" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="800">DASHBOARD READY</text>
+		<text x="-120" y="25" text-anchor="middle" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="13" font-weight="800">DASHBOARD READY</text>
 	</g>
 
 	<!-- Divider -->
@@ -730,7 +803,7 @@ export async function renderSetupCardPng(opts: SetupCardOptions): Promise<Buffer
 	<!-- Full-Width Message Template Card -->
 	<g transform="translate(32, 464)">
 		<rect width="856" height="54" rx="18" fill="${cardBg}" fill-opacity="${isLight ? '0.92' : '0.88'}" stroke="${accent}" stroke-opacity="0.28" stroke-width="1.2" />
-		<text x="22" y="32" fill="${accent}" font-family="Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.2">MESSAGE TEMPLATE</text>
+		<text x="22" y="32" fill="${accent}" font-family="Fredoka, Segoe UI, Inter, system-ui, sans-serif" font-size="11.5" font-weight="800" letter-spacing="1.2">MESSAGE TEMPLATE</text>
 		<g transform="translate(196, 11)">
 			<rect width="640" height="32" rx="10" fill="${trackBg}" />
 			<text x="16" y="21" fill="${textPrimary}" font-family="Consolas, monospace, Segoe UI, sans-serif" font-size="13" font-weight="700">${safeTemplate}</text>
@@ -738,5 +811,5 @@ export async function renderSetupCardPng(opts: SetupCardOptions): Promise<Buffer
 	</g>
 </svg>`;
 
-	return await sharp(Buffer.from(svg)).png().toBuffer();
+	return await renderSvgToPng(svg);
 }

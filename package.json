@@ -1,6 +1,6 @@
 {
 	"name": "virtue",
-	"version": "2.2.0",
+	"version": "2.2.1",
 	"description": "",
 	"main": "dist/main.js",
 	"type": "module",
@@ -25,6 +25,7 @@
 		"typescript": "^5.9.3"
 	},
 	"dependencies": {
+		"@resvg/resvg-js": "^2.6.2",
 		"@xernerx/commands": "^0.2.8",
 		"@xernerx/framework": "^1.1.2",
 		"@xernerx/stats": "^1.0.14",

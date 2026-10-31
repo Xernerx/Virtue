@@ -26,6 +26,16 @@ export function calculateExperience(range: keyof typeof ranges) {
 	return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+export function resolveUnifiedServerProgress(member: any, text?: any, voice?: any): { level: number; xp: number } {
+	const candidates = [
+		{ level: Number(member?.level) || 0, xp: Number(member?.xp) || 0 },
+		{ level: Number(text?.level) || 0, xp: Number(text?.xp) || 0 },
+		{ level: Number(voice?.level) || 0, xp: Number(voice?.xp) || 0 },
+	];
+	candidates.sort((a, b) => b.level - a.level || b.xp - a.xp);
+	return candidates[0] || { level: 0, xp: 0 };
+}
+
 /**
  * Calculates credit rewards for reaching `newLevel` on either the unified Server track or Global track.
  * Uses square-root progression with hard caps so high levels feel rewarding without runaway inflation.

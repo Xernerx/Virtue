@@ -3,7 +3,7 @@
 import { SlashCommandBuilder, type SlashCommandOptions } from '@xernerx/framework';
 import { AttachmentBuilder, EmbedBuilder } from 'discord.js';
 import { renderLevelCardPng, resolveUserAccent, type LevelRoleSummary } from '../../lib/levelCard.js';
-import { calculateLevel, extractGuildLevelRoles } from '../../lib/levels.js';
+import { calculateLevel, extractGuildLevelRoles, resolveUnifiedServerProgress } from '../../lib/levels.js';
 
 function formatVoiceTime(totalSeconds: number): string {
 	const secs = Math.max(0, Math.floor(Number(totalSeconds) || 0));
@@ -44,18 +44,22 @@ export async function replyWithLevelCard(ws: any, interaction: any, target: any)
 	}
 
 	const mode = (guild?.mode || 'balanced') as 'easy' | 'casual' | 'balanced' | 'hard' | 'extreme';
-	const effectiveMember = member || text || voice;
+	const resolvedServer = resolveUnifiedServerProgress(member, text, voice);
 
 	const globalLevel = user?.level ?? 0;
 	const globalXp = user?.xp ?? 0;
-	const serverLevel = effectiveMember?.level ?? 0;
-	const serverXp = effectiveMember?.xp ?? 0;
+	const serverLevel = resolvedServer.level;
+	const serverXp = resolvedServer.xp;
 	const textLevel = text?.level ?? 0;
 	const textXp = text?.xp ?? 0;
 	const textMessages = text?.messages ?? 0;
 	const voiceLevel = voice?.level ?? 0;
 	const voiceXp = voice?.xp ?? 0;
 	const voiceSeconds = voice?.timeSpent ?? 0;
+
+	if (guildId && (serverLevel > (Number(member?.level) || 0) || (serverLevel === (Number(member?.level) || 0) && serverXp > (Number(member?.xp) || 0)))) {
+		ws.update('virtue', 'levels', { id: target.id, guild: guildId, level: serverLevel, xp: serverXp }).catch(() => null);
+	}
 
 	const globalNext = calculateLevel('balanced', globalLevel);
 	const serverNext = calculateLevel(mode, serverLevel);

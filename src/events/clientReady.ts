@@ -31,8 +31,7 @@ export default class ClientReadyEvent extends EventBuilder {
 	override async run() {
 		const client = this.client;
 		const ws = (client as any).websocket;
-		const isDev = process.env.NODE_ENV?.toUpperCase() === 'DEVELOPMENT' || process.env.ENVIRONMENT?.toUpperCase() === 'DEVELOPMENT';
-		const healthUrl = isDev ? 'https://ws.dev.xernerx.com/health' : 'https://ws.xernerx.com/health';
+		const healthUrl = 'https://ws.xernerx.com/health';
 
 		const connect = async () => {
 			const healthy = await fetch(healthUrl)

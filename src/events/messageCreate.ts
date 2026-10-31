@@ -9,6 +9,7 @@ import {
 	getMemberServerMultiplier,
 	isChannelFilteredOut,
 	resolveGlobalXpMultiplier,
+	resolveUnifiedServerProgress,
 	syncMemberLevelRoles,
 } from '../lib/levels.js';
 
@@ -144,8 +145,9 @@ export default class MessageCreateEvent extends EventBuilder {
 
 		// ===== GUILD LEVEL (UNIFIED) & TEXT LEVEL =====
 		const effectiveMember = member || text;
-		let memberLevel = effectiveMember?.level ?? 0;
-		let memberXp = effectiveMember?.xp ?? 0;
+		const resolvedServer = resolveUnifiedServerProgress(member, text);
+		let memberLevel = resolvedServer.level;
+		let memberXp = resolvedServer.xp;
 
 		let textLevel = text?.level ?? 0;
 		let textXp = text?.xp ?? 0;
