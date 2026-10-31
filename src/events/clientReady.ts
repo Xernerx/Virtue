@@ -2,6 +2,7 @@
 
 import { EventBuilder } from '@xernerx/framework';
 import { ActivityType, type PresenceStatusData } from 'discord.js';
+import { runCycleChecks } from '../lib/cycleRunner.js';
 import { syncGuildMetadata } from '../lib/guildSync.js';
 
 export default class ClientReadyEvent extends EventBuilder {
@@ -75,6 +76,7 @@ export default class ClientReadyEvent extends EventBuilder {
 				activity.state = `Keeping track of your activeness! | ${client.guilds.cache.size} servers!`;
 
 				await this.syncGuilds();
+				await runCycleChecks(client).catch(() => null);
 
 				if (client.user?.id) {
 					await ws

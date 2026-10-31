@@ -19,7 +19,7 @@ export async function syncGuildMetadata(ws: any, guild: Guild) {
 
 	const channelsCollection = await guild.channels.fetch().catch(() => guild.channels.cache);
 	const serverChannels = Array.from(channelsCollection?.values?.() || [])
-		.filter((c: any) => c && c.id && (c.type === 0 || c.type === 5))
+		.filter((c: any) => c && c.id && (c.type === 0 || c.type === 5 || c.type === 2 || c.type === 13))
 		.sort((a: any, b: any) => (a.rawPosition ?? a.position ?? 0) - (b.rawPosition ?? b.position ?? 0))
 		.map((c: any) => ({
 			id: String(c.id),

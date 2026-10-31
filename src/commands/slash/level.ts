@@ -1,19 +1,189 @@
 /** @format */
 
 import { SlashCommandBuilder, type SlashCommandOptions } from '@xernerx/framework';
-import { ChatInputCommandInteraction, EmbedBuilder } from 'discord.js';
-import { calculateLevel } from '../../lib/levels.js';
+import { AttachmentBuilder, EmbedBuilder } from 'discord.js';
+import { renderLevelCardPng, resolveUserAccent, type LevelRoleSummary } from '../../lib/levelCard.js';
+import { calculateLevel, extractGuildLevelRoles } from '../../lib/levels.js';
+
+function formatVoiceTime(totalSeconds: number): string {
+	const secs = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+	if (secs < 60) return `${secs}s`;
+	const totalMinutes = Math.floor(secs / 60);
+	if (totalMinutes < 60) return `${totalMinutes}m`;
+	const hours = Math.floor(totalMinutes / 60);
+	const mins = totalMinutes % 60;
+	return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+export async function replyWithLevelCard(ws: any, interaction: any, target: any) {
+	const guildId = interaction.guild?.id;
+	const guildName = interaction.guild?.name || 'Server';
+
+	const [user, member, text, voice, guild, accent] = await Promise.all([
+		ws.get('xernerx', 'levels', { ownerId: target.id }).catch(() => null),
+		ws.get('virtue', 'levels', { id: target.id, guild: guildId }).catch(() => null),
+		ws.get('virtue', 'text', { id: target.id, guild: guildId }).catch(() => null),
+		ws.get('virtue', 'voice', { id: target.id, guild: guildId }).catch(() => null),
+		ws.get('virtue', 'guilds', { id: guildId }).catch(() => null),
+		resolveUserAccent(ws, target.id, interaction.user.id),
+	]);
+
+	if (!user && !member && !text && !voice) {
+		const emptyEmbed = new EmbedBuilder()
+			.setColor(accent.colorInt)
+			.setDescription(
+				target.id === interaction.user.id
+					? 'You have not earned any XP yet — send a message or join a voice channel to start leveling up!'
+					: `**${target.globalName || target.username}** has not earned any XP yet.`
+			);
+
+		return interaction.util.reply({
+			embeds: [emptyEmbed],
+			ephemeral: true,
+		});
+	}
+
+	const mode = (guild?.mode || 'balanced') as 'easy' | 'casual' | 'balanced' | 'hard' | 'extreme';
+	const effectiveMember = member || text || voice;
+
+	const globalLevel = user?.level ?? 0;
+	const globalXp = user?.xp ?? 0;
+	const serverLevel = effectiveMember?.level ?? 0;
+	const serverXp = effectiveMember?.xp ?? 0;
+	const textLevel = text?.level ?? 0;
+	const textXp = text?.xp ?? 0;
+	const textMessages = text?.messages ?? 0;
+	const voiceLevel = voice?.level ?? 0;
+	const voiceXp = voice?.xp ?? 0;
+	const voiceSeconds = voice?.timeSpent ?? 0;
+
+	const globalNext = calculateLevel('balanced', globalLevel);
+	const serverNext = calculateLevel(mode, serverLevel);
+	const textNext = calculateLevel(mode, textLevel);
+	const voiceNext = calculateLevel(mode, voiceLevel);
+
+	const calcProgress = (current: number, next: number) => (next > 0 ? Math.min(100, Math.round((current / next) * 10000) / 100) : 0);
+
+	const globalProgress = calcProgress(globalXp, globalNext);
+	const serverProgress = calcProgress(serverXp, serverNext);
+	const textProgress = calcProgress(textXp, textNext);
+	const voiceProgress = calcProgress(voiceXp, voiceNext);
+
+	const sortedRoles = extractGuildLevelRoles(guild);
+	const isRoleUnlocked = (lr: { level: number; track: 'server' | 'text' | 'voice' }) => {
+		const userLvl = lr.track === 'text' ? textLevel : lr.track === 'voice' ? voiceLevel : serverLevel;
+		return Number(lr.level) <= userLvl;
+	};
+	const currentUnlockedRaw = [...sortedRoles].filter(isRoleUnlocked).pop();
+	const nextRoleRaw = sortedRoles.find((lr) => !isRoleUnlocked(lr));
+
+	const resolveRoleSummary = (entry?: { level: number; roleId: string; track?: 'server' | 'text' | 'voice' }): LevelRoleSummary | null => {
+		if (!entry?.roleId) return null;
+		const discordRole = interaction.guild?.roles?.cache?.get(entry.roleId);
+		const syncedRole = Array.isArray(guild?.serverRoles) ? guild.serverRoles.find((r: any) => String(r.id) === String(entry.roleId)) : null;
+		const name = discordRole?.name || syncedRole?.name || `Role ${entry.roleId}`;
+		const rawColor = discordRole?.color ?? syncedRole?.color ?? 0;
+		const colorHex = Number(rawColor) > 0 ? `#${Number(rawColor).toString(16).padStart(6, '0')}` : accent.colorHex;
+		return {
+			name,
+			level: Number(entry.level),
+			colorHex,
+			track: entry.track,
+		};
+	};
+
+	const currentRoleSummary = resolveRoleSummary(currentUnlockedRaw);
+	const nextRoleSummary = resolveRoleSummary(nextRoleRaw);
+
+	const displayName = target.globalName || target.username || 'User';
+	const avatarUrl = typeof target.displayAvatarURL === 'function' ? target.displayAvatarURL({ extension: 'png', size: 256 }) : null;
+	const voiceFormatted = formatVoiceTime(voiceSeconds);
+
+	const pngBuffer = await renderLevelCardPng({
+		displayName,
+		username: target.username || displayName,
+		avatarUrl,
+		guildName,
+		accentHex: accent.colorHex,
+		theme: accent.theme,
+		tracks: {
+			global: {
+				title: 'Global Level',
+				subtitle: 'Xernerx Ecosystem (Unified)',
+				level: globalLevel,
+				currentXp: globalXp,
+				nextXp: globalNext,
+				progress: globalProgress,
+			},
+			server: {
+				title: `${guildName} Level`,
+				subtitle: 'Unified Server Progression',
+				level: serverLevel,
+				currentXp: serverXp,
+				nextXp: serverNext,
+				progress: serverProgress,
+			},
+			text: {
+				title: 'Text Level',
+				subtitle: 'Server Chat Progression',
+				badge: `${textMessages.toLocaleString()} msgs`,
+				level: textLevel,
+				currentXp: textXp,
+				nextXp: textNext,
+				progress: textProgress,
+			},
+			voice: {
+				title: 'Voice Level',
+				subtitle: 'Server Voice Progression',
+				badge: `${voiceFormatted} in VC`,
+				level: voiceLevel,
+				currentXp: voiceXp,
+				nextXp: voiceNext,
+				progress: voiceProgress,
+			},
+		},
+		currentRole: currentRoleSummary,
+		nextRole: nextRoleSummary,
+	});
+
+	const attachment = new AttachmentBuilder(pngBuffer, {
+		name: 'level-progression.png',
+	});
+
+	const botUser = interaction.client.user;
+	const botAvatar = botUser?.displayAvatarURL();
+	const embed = new EmbedBuilder()
+		.setColor(accent.colorInt)
+		.setAuthor({
+			name: `${displayName} • Level Progression`,
+			url: `https://app.xernerx.com/users/${target.id}`,
+			...(avatarUrl ? { iconURL: avatarUrl } : {}),
+		})
+		.setImage('attachment://level-progression.png')
+		.setFooter({
+			text: `${botUser?.username || 'Virtue'}`,
+			...(botAvatar ? { iconURL: botAvatar } : {}),
+		})
+		.setTimestamp();
+
+	return interaction.util.reply({
+		embeds: [embed],
+		files: [attachment],
+		ephemeral: true,
+	});
+}
 
 export default class LevelCommand extends SlashCommandBuilder {
 	constructor() {
 		super('level', {
 			name: 'level',
-			description: 'View your levels.',
+			description: 'View your levels and progression card.',
+			defer: true,
 			options: [
 				{
 					type: 'user',
 					name: 'user',
-					description: 'user',
+					description: 'Select a user to view their level progression.',
 				},
 			],
 			permissions: {
@@ -24,137 +194,7 @@ export default class LevelCommand extends SlashCommandBuilder {
 
 	override async exec({ interaction, options }: SlashCommandOptions) {
 		const ws = (this.client as any).websocket;
-
-		const target = (options?.user as any)?.user || (interaction.user as any);
-
-		const [user, member, text, voice, guild] = await Promise.all([
-			ws.get('xernerx', 'levels', { ownerId: target.id }).catch(() => null),
-			ws.get('virtue', 'levels', { id: target.id, guild: interaction.guild?.id }).catch(() => null),
-			ws.get('virtue', 'text', { id: target.id, guild: interaction.guild?.id }).catch(() => null),
-			ws.get('virtue', 'voice', { id: target.id, guild: interaction.guild?.id }).catch(() => null),
-			ws.get('virtue', 'guilds', { id: interaction.guild?.id }).catch(() => null),
-		]);
-
-		if (!user && !member && !text && !voice)
-			return interaction.util.reply({
-				content: 'You have never sent a message where I can see it... Why?',
-				ephemeral: true,
-			});
-
-		const mode = guild?.mode || 'balanced';
-		const globalLevel = user?.level ?? 0;
-		const globalXp = user?.xp ?? 0;
-		const serverLevel = member?.level ?? 0;
-		const serverXp = member?.xp ?? 0;
-		const textLevel = text?.level ?? 0;
-		const textXp = text?.xp ?? 0;
-		const voiceLevel = voice?.level ?? 0;
-		const voiceXp = voice?.xp ?? 0;
-
-		const levels = {
-			global: {
-				next: calculateLevel('balanced', globalLevel),
-				current: globalXp,
-				progress: 0,
-			},
-			server: {
-				next: calculateLevel(mode, serverLevel),
-				current: serverXp,
-				progress: 0,
-			},
-			text: {
-				next: calculateLevel(mode, textLevel),
-				current: textXp,
-				progress: 0,
-			},
-			voice: {
-				next: calculateLevel(mode, voiceLevel),
-				current: voiceXp,
-				progress: 0,
-			},
-		};
-
-		levels.global.progress = Math.round((levels.global.current / levels.global.next) * 10000) / 100;
-		levels.server.progress = Math.round((levels.server.current / levels.server.next) * 10000) / 100;
-		levels.text.progress = Math.round((levels.text.current / levels.text.next) * 10000) / 100;
-		levels.voice.progress = Math.round((levels.voice.current / levels.voice.next) * 10000) / 100;
-
-		const makeBar = (progress: number, size = 10) => {
-			const filled = Math.round((progress / 100) * size);
-			const empty = size - filled;
-
-			return `\`${'█'.repeat(filled)}${'░'.repeat(empty)}\``;
-		};
-
-		const embed = new EmbedBuilder()
-			.setColor('#f2d9b6')
-			.setTitle('Level overview')
-			.addFields([
-				{
-					name: 'Global Level',
-					value: [`**${globalLevel}** ${makeBar(levels.global.progress)} **${globalLevel + 1}**`, `XP: \`${levels.global.current}/${levels.global.next}\` (${levels.global.progress}%)`].join('\n'),
-				},
-			]);
-
-		if (member) {
-			embed.addFields([
-				{
-					name: `${interaction.guild?.name} Level`,
-					value: [`**${serverLevel}** ${makeBar(levels.server.progress)} **${serverLevel + 1}**`, `XP: \`${levels.server.current}/${levels.server.next}\` (${levels.server.progress}%)`].join('\n'),
-				},
-			]);
-		}
-
-		if (text) {
-			embed.addFields([
-				{
-					name: `${interaction.guild?.name} Text Level`,
-					value: [
-						`**${textLevel}** ${makeBar(levels.text.progress)} **${textLevel + 1}**`,
-						`XP: \`${levels.text.current}/${levels.text.next}\` (${levels.text.progress}%)`,
-						`Messages: \`${text.messages ?? 0}\``,
-					].join('\n'),
-				},
-			]);
-		}
-
-		if (voice) {
-			const minutes = Math.floor((voice.timeSpent ?? 0) / 60);
-
-			embed.addFields([
-				{
-					name: `${interaction.guild?.name} Voice Level`,
-					value: [
-						`**${voiceLevel}** ${makeBar(levels.voice.progress)} **${voiceLevel + 1}**`,
-						`XP: \`${levels.voice.current}/${levels.voice.next}\` (${levels.voice.progress}%)`,
-						`Voice Time: \`${minutes}m\``,
-					].join('\n'),
-				},
-			]);
-		}
-
-		const levelRoles: Array<{ level: number; roleId: string }> =
-			Array.isArray(guild?.levelRoles) && guild.levelRoles.length > 0 ? guild.levelRoles : Array.isArray(guild?.roles?.levels) ? guild.roles.levels : [];
-
-		if (levelRoles.length > 0) {
-			const sortedRoles = [...levelRoles].filter((lr) => lr?.roleId && Number(lr.level) > 0).sort((a, b) => Number(a.level) - Number(b.level));
-			const currentUnlocked = [...sortedRoles].filter((lr) => Number(lr.level) <= serverLevel).pop();
-			const nextRole = sortedRoles.find((lr) => Number(lr.level) > serverLevel);
-
-			const lines: string[] = [];
-			if (currentUnlocked) lines.push(`Current: <@&${currentUnlocked.roleId}> (Level ${currentUnlocked.level})`);
-			if (nextRole) lines.push(`Next: <@&${nextRole.roleId}> (Level ${nextRole.level})`);
-
-			if (lines.length > 0) {
-				embed.addFields([
-					{
-						name: 'Level Roles',
-						value: lines.join('\n'),
-					},
-				]);
-			}
-		}
-
-		interaction.util.reply({ embeds: [embed], ephemeral: true });
+		const target = (options?.user as any)?.user || (interaction.options as any)?.getUser?.('user') || interaction.user;
+		return replyWithLevelCard(ws, interaction, target);
 	}
 }

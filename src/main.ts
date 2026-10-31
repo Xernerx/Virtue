@@ -24,6 +24,9 @@ export class WebSocket extends XernerxWebsocket {
 			(this as any).ready = false;
 			(this as any).connecting = null;
 		}
+		if ((this as any).ready && rawWs?.readyState === 1) {
+			return;
+		}
 		return super.connect();
 	}
 }
@@ -48,6 +51,10 @@ export class Client extends XernerxClient {
 
 		this.modules.commandHandler.loadSlashCommands({
 			directory: 'dist/commands/slash',
+		});
+
+		this.modules.commandHandler.loadContextCommands({
+			directory: 'dist/commands/context',
 		});
 
 		this.modules.commandHandler.loadMessageCommands({

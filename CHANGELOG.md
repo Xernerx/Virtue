@@ -1,5 +1,30 @@
 <!-- @format -->
 
+## 2.2.0
+
+### Minor Changes
+
+- ### Visual Rank Cards, Leaderboards, Context Menus, Level Role Tracks, Credit Rewards & XP Events
+  
+  - **Rendered Visual Level & Setup Cards**:
+    - Upgraded `/level` and `/setup` to generate crisp visual cards displaying your Discord avatar, Global Level, Unified Server Level, Text Level (with message count), Voice Level (with voice time), progress bars, unlocked/upcoming Level Roles, and full server configuration status.
+    - **Profile Theme & Accent Sync**: Cards and embeds automatically match your Xernerx web profile appearance (`light` or `dark` theme and custom accent color).
+  - **Context Menu Commands (`View Level` & `View Author Level`)**:
+    - Right-click any user (**Apps → View Level**) or any message (**Apps → View Author Level**) to quickly inspect a member's progression card directly from chat.
+  - **New `/leaderboard`, `/roles`, and `/info` Slash Commands**:
+    - **`/leaderboard`**: Browse full-width visual leaderboards for **Unified Server Level**, **Text Level**, **Voice Level**, and **Global Xernerx Level**, complete with podium badges and your live rank.
+    - **`/roles`**: View all level role milestones configured in the server, their required level and track, and which roles you have already unlocked.
+    - **`/info`**: Inspect live bot statistics, uptime, latency, version info, and quick links to the Xernerx Dashboard and Support.
+  - **Independent Level Role Tracks & Role Stacking**:
+    - Server admins can now assign level roles independently to **Unified Server Level**, **Text Level**, or **Voice Level** tracks, and choose whether members **stack** all unlocked level roles or **replace** lower roles on that track with their highest milestone role.
+  - **Level-Up Credit Rewards & Expanded Message Placeholders**:
+    - Leveling up in a server or globally now automatically awards **Xernerx Credits** using a level-scaled progression formula.
+    - Added support for `[@credits]` / `{credits}`, `[@role]` / `{role}`, `[@username]`, `[@nickname]`, and `[@server]` placeholders in custom level-up messages.
+  - **Automated Reset Cycles, Channel Filters & XP Multipliers**:
+    - **Daily, Weekly & Monthly Cycles**: Automatically resets server progression at cycle boundaries and announces the top 3 podium winners (`🥇`, `🥈`, `🥉`) in the level-up channel.
+    - **Ignored Channels**: Mute XP gain in selected text, voice, or category channels.
+    - **Server Booster Bonus & Scheduled Global XP Events**: Added configurable XP multipliers for Server Boosters (`1.25x`–`2x`) and scheduled Global XP Doubler events that sync automatically with Discord Scheduled Events.
+
 ## 2.1.4
 
 ### Patch Changes

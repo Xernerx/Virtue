@@ -2,7 +2,16 @@
 
 import { EventBuilder } from '@xernerx/framework';
 import type { VoiceState } from 'discord.js';
-import { calculateExperience, calculateLevel } from '../lib/levels.js';
+import {
+	calculateExperience,
+	calculateLevel,
+	calculateLevelUpCredits,
+	extractGuildLevelRoles,
+	getMemberServerMultiplier,
+	isChannelFilteredOut,
+	resolveGlobalXpMultiplier,
+	syncMemberLevelRoles,
+} from '../lib/levels.js';
 
 const cooldowns = {
 	easy: 30,
@@ -102,8 +111,9 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 
 		const userId = state.member.id;
 		const guildId = state.guild.id;
+		const ws = (this.client as any).websocket;
 
-		const [user, member, voice, rawGuild] = await Promise.all([
+		const [user, member, voice, rawGuild, , globalXpState] = await Promise.all([
 			this.getOrCreate('xernerx', 'levels', {
 				ownerId: userId,
 			}),
@@ -121,6 +131,7 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 			this.getOrCreate('virtue', 'users', {
 				id: userId,
 			}),
+			resolveGlobalXpMultiplier(ws),
 		]);
 
 		if (!user && !member && !voice) return;
@@ -137,17 +148,22 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 		const memberRoles = state.member.roles?.cache;
 		const isIgnored = Array.isArray(guild.roles?.ignored) && guild.roles.ignored.length > 0 && memberRoles?.some((r: any) => guild.roles.ignored.includes(r.id));
 		const isUntracked = Array.isArray(guild.roles?.tracked) && guild.roles.tracked.length > 0 && !memberRoles?.some((r: any) => guild.roles.tracked.includes(r.id));
+		const isChannelIgnored = isChannelFilteredOut(guild, state.channelId, state.channel?.parentId);
 
 		const bypassGlobal = this.hasCooldown(globalKey, globalCooldown, this.globalCooldowns);
-		const bypassGuild = isIgnored || isUntracked || this.hasCooldown(guildKey, cooldown, this.guildCooldowns);
+		const bypassGuild = isIgnored || isUntracked || isChannelIgnored || this.hasCooldown(guildKey, cooldown, this.guildCooldowns);
 
-		const globalXpGain = calculateExperience('balanced');
-		const guildXpGain = calculateExperience(mode);
-		const ws = (this.client as any).websocket;
+		const rawGlobalXpGain = calculateExperience('balanced');
+		const rawGuildXpGain = calculateExperience(mode);
+		const globalXpGain = globalXpState.active ? Math.max(1, Math.round(rawGlobalXpGain * globalXpState.multiplier)) : rawGlobalXpGain;
+		const serverMultiplier = getMemberServerMultiplier(state.member, guild, globalXpState);
+		const guildXpGain = Math.max(1, Math.round(rawGuildXpGain * serverMultiplier));
+		const creditMultiplier = globalXpState.active && globalXpState.scope === 'everything' ? globalXpState.multiplier : 1;
 
 		// ===== GLOBAL =====
 		let userLevel = user?.level ?? 0;
 		let userXp = user?.xp ?? 0;
+		let creditsEarned = 0;
 
 		if (user && !bypassGlobal) {
 			userXp += globalXpGain;
@@ -155,11 +171,13 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 			while (userXp >= calculateLevel('balanced', userLevel)) {
 				userXp -= calculateLevel('balanced', userLevel);
 				userLevel++;
+				const globalCredits = Math.max(1, Math.round(calculateLevelUpCredits('global', userLevel) * creditMultiplier));
+				creditsEarned += globalCredits;
 
 				const profile = await ws.get('xernerx', 'users', { id: userId }).catch(() => null);
 
 				if (profile?.notifications?.virtue?.levelup?.discord) {
-					state.member.user.send(`You went level up! You are now level ${userLevel}`).catch(() => null);
+					state.member.user.send(`You went level up! You are now level ${userLevel} (+${globalCredits} credits)`).catch(() => null);
 				}
 			}
 		}
@@ -173,8 +191,7 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 		let voiceXp = voice?.xp ?? 0;
 		const timeSpent = (voice?.timeSpent ?? 0) + elapsedSeconds;
 
-		const levelRoles: Array<{ level: number; roleId: string }> =
-			Array.isArray(guild.levelRoles) && guild.levelRoles.length > 0 ? guild.levelRoles : Array.isArray(guild.roles?.levels) ? guild.roles.levels : [];
+		const levelRoles = extractGuildLevelRoles(guild);
 
 		if (!bypassGuild) {
 			if (effectiveMember) memberXp += guildXpGain;
@@ -191,10 +208,14 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 				while (memberXp >= calculateLevel(mode, memberLevel)) {
 					memberXp -= calculateLevel(mode, memberLevel);
 					memberLevel++;
+					const serverCredits = Math.max(1, Math.round(calculateLevelUpCredits('server', memberLevel) * creditMultiplier));
+					creditsEarned += serverCredits;
 
 					if (guild.levelUp && guild.levelChannel) {
-						const unlockedAtLevel = levelRoles.filter((lr) => Number(lr?.level) === memberLevel && lr?.roleId);
-						const highestUnlocked = [...levelRoles].filter((lr) => Number(lr?.level) <= memberLevel && lr?.roleId).sort((a, b) => Number(b.level) - Number(a.level))[0];
+						const unlockedAtLevel = levelRoles.filter((lr) => lr?.roleId && ((lr.track === 'server' && Number(lr.level) === memberLevel) || (lr.track === 'voice' && Number(lr.level) === voiceLevel)));
+						const highestUnlocked = [...levelRoles]
+							.filter((lr) => lr?.roleId && ((lr.track === 'server' && Number(lr.level) <= memberLevel) || (lr.track === 'voice' && Number(lr.level) <= voiceLevel)))
+							.sort((a, b) => Number(b.level) - Number(a.level))[0];
 						const roleMention = unlockedAtLevel.length > 0 ? unlockedAtLevel.map((lr) => `<@&${lr.roleId}>`).join(', ') : highestUnlocked ? `<@&${highestUnlocked.roleId}>` : '';
 
 						const msg = (guild.levelMessage || '[@mention] reached level [@level] :tada:!')
@@ -203,6 +224,7 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 							.replace(/\[@nickname\]/gi, state.member.nickname || state.member.user.globalName || state.member.user.username)
 							.replace(/\[@level\]|\{level\}/gi, String(memberLevel))
 							.replace(/\[@role\]|\{role\}/gi, roleMention)
+							.replace(/\[@credits\]|\{credits\}/gi, String(serverCredits))
 							.replace(/\[@server\]/gi, state.guild.name);
 
 						await this.client.channels
@@ -214,22 +236,39 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 			}
 		}
 
-		if (!isIgnored && !isUntracked && levelRoles.length > 0 && state.member.roles) {
-			const missingRoleIds = Array.from(
-				new Set(
-					levelRoles
-						.filter((lr) => lr?.roleId && Number(lr.level) > 0 && Number(lr.level) <= memberLevel)
-						.map((lr) => String(lr.roleId).trim())
-						.filter((roleId) => roleId && !state.member!.roles.cache.has(roleId))
-				)
+		if (!isIgnored && !isUntracked && !isChannelIgnored && levelRoles.length > 0 && state.member.roles) {
+			await syncMemberLevelRoles(
+				state.member,
+				guild,
+				{
+					server: memberLevel,
+					voice: voiceLevel,
+				},
+				['server', 'voice']
 			);
-
-			if (missingRoleIds.length > 0) {
-				await state.member.roles.add(missingRoleIds).catch(() => null);
-			}
 		}
 
 		const updates: Promise<any>[] = [];
+
+		if (creditsEarned > 0) {
+			updates.push(
+				(async () => {
+					const creditDoc = await this.getOrCreate('xernerx', 'credits', {
+						ownerId: userId,
+					});
+					const prevBalance = Number(creditDoc?.balance) || 0;
+					return ws
+						.update('xernerx', 'credits', {
+							ownerId: userId,
+							balance: prevBalance + creditsEarned,
+						})
+						.catch((err: unknown) => {
+							console.error('[WS] PATCH xernerx/credits failed:', (err as Error)?.message || err);
+							return null;
+						});
+				})()
+			);
+		}
 
 		if (user) {
 			updates.push(

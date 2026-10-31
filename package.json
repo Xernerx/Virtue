@@ -1,6 +1,6 @@
 {
 	"name": "virtue",
-	"version": "2.1.4",
+	"version": "2.2.0",
 	"description": "",
 	"main": "dist/main.js",
 	"type": "module",
@@ -25,12 +25,13 @@
 		"typescript": "^5.9.3"
 	},
 	"dependencies": {
-		"@xernerx/commands": "^0.2.7",
-		"@xernerx/framework": "^1.1.1",
+		"@xernerx/commands": "^0.2.8",
+		"@xernerx/framework": "^1.1.2",
 		"@xernerx/stats": "^1.0.14",
-		"@xernerx/terminal": "^1.1.15",
+		"@xernerx/terminal": "^1.2.0",
 		"@xernerx/websocket": "^0.4.16",
-		"discord.js": "^14.27.0",
-		"dotenv": "^18.0.9"
+		"discord.js": "^14.28.0",
+		"dotenv": "^18.0.9",
+		"sharp": "0.35.5"
 	}
 }
