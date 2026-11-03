@@ -3,7 +3,7 @@
 import { SlashCommandBuilder, type SlashCommandOptions } from '@xernerx/framework';
 import { AttachmentBuilder, EmbedBuilder } from 'discord.js';
 import { renderRolesCardPng, resolveUserAccent, type LevelRoleSummary } from '../../lib/levelCard.js';
-import { extractGuildLevelRoles, resolveUnifiedServerProgress } from '../../lib/levels.js';
+import { extractGuildLevelRoles, isServicesDisabledDoc, resolveUnifiedServerProgress } from '../../lib/levels.js';
 
 export default class RolesCommand extends SlashCommandBuilder {
 	constructor() {
@@ -22,13 +22,17 @@ export default class RolesCommand extends SlashCommandBuilder {
 		const guildId = interaction.guild?.id;
 		const guildName = interaction.guild?.name || 'Discord Server';
 
-		const [accent, guild, member, text, voice] = await Promise.all([
+		const [accent, guild, rawMember, rawText, rawVoice] = await Promise.all([
 			resolveUserAccent(ws, interaction.user.id),
 			guildId ? ws.get('virtue', 'guilds', { id: guildId }).catch(() => null) : Promise.resolve(null),
 			guildId ? ws.get('virtue', 'levels', { id: interaction.user.id, guild: guildId }).catch(() => null) : Promise.resolve(null),
 			guildId ? ws.get('virtue', 'text', { id: interaction.user.id, guild: guildId }).catch(() => null) : Promise.resolve(null),
 			guildId ? ws.get('virtue', 'voice', { id: interaction.user.id, guild: guildId }).catch(() => null) : Promise.resolve(null),
 		]);
+
+		const member = isServicesDisabledDoc(rawMember) ? null : rawMember;
+		const text = isServicesDisabledDoc(rawText) ? null : rawText;
+		const voice = isServicesDisabledDoc(rawVoice) ? null : rawVoice;
 
 		const resolvedServer = resolveUnifiedServerProgress(member, text, voice);
 		const serverLevel = resolvedServer.level;

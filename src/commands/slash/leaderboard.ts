@@ -3,7 +3,7 @@
 import { SlashCommandBuilder, type SlashCommandOptions } from '@xernerx/framework';
 import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
 import { renderLeaderboardCardPng, resolveUserAccent, type LeaderboardEntryData } from '../../lib/levelCard.js';
-import { calculateLevel, resolveUnifiedServerProgress } from '../../lib/levels.js';
+import { calculateLevel, isServicesDisabledDoc, resolveUnifiedServerProgress } from '../../lib/levels.js';
 
 function normalizeDocList(raw: any): any[] {
 	if (!raw) return [];
@@ -19,7 +19,7 @@ function normalizeDocList(raw: any): any[] {
 function mergeByHighestLevel(docs: any[]): any[] {
 	const map = new Map<string, any>();
 	for (const doc of docs) {
-		if (!doc || typeof doc !== 'object') continue;
+		if (!doc || typeof doc !== 'object' || isServicesDisabledDoc(doc)) continue;
 		const uid = String(doc.id || doc.ownerId || doc.userId || '');
 		if (!uid) continue;
 		const level = Number(doc.level) || 0;

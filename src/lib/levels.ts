@@ -27,13 +27,116 @@ export function calculateExperience(range: keyof typeof ranges) {
 }
 
 export function resolveUnifiedServerProgress(member: any, text?: any, voice?: any): { level: number; xp: number } {
+	const safeMember = isServicesDisabledDoc(member) ? null : member;
+	const safeText = isServicesDisabledDoc(text) ? null : text;
+	const safeVoice = isServicesDisabledDoc(voice) ? null : voice;
 	const candidates = [
-		{ level: Number(member?.level) || 0, xp: Number(member?.xp) || 0 },
-		{ level: Number(text?.level) || 0, xp: Number(text?.xp) || 0 },
-		{ level: Number(voice?.level) || 0, xp: Number(voice?.xp) || 0 },
+		{ level: Number(safeMember?.level) || 0, xp: Number(safeMember?.xp) || 0 },
+		{ level: Number(safeText?.level) || 0, xp: Number(safeText?.xp) || 0 },
+		{ level: Number(safeVoice?.level) || 0, xp: Number(safeVoice?.xp) || 0 },
 	];
 	candidates.sort((a, b) => b.level - a.level || b.xp - a.xp);
 	return candidates[0] || { level: 0, xp: 0 };
+}
+
+export interface UserServicesCheckResult {
+	allowed: boolean;
+	services: boolean;
+	blacklisted: boolean;
+	userDoc: any;
+	virtueUserDoc: any;
+}
+
+const userServicesCache = new Map<string, { expiresAtMs: number; state: UserServicesCheckResult }>();
+const USER_SERVICES_TTL_MS = 15_000;
+
+export function isServicesDisabledDoc(doc: any): boolean {
+	if (!doc || typeof doc !== 'object') return false;
+	return doc.services === false || doc.servicesDisabled === true || doc.blacklisted === true;
+}
+
+export function markUserServicesCache(userId: string, partial: { services?: boolean; blacklisted?: boolean; userDoc?: any; virtueUserDoc?: any }) {
+	if (!userId) return;
+	const services = partial.services !== false;
+	const blacklisted = Boolean(partial.blacklisted);
+	const state: UserServicesCheckResult = {
+		allowed: services && !blacklisted,
+		services,
+		blacklisted,
+		userDoc: partial.userDoc ?? null,
+		virtueUserDoc: partial.virtueUserDoc ?? null,
+	};
+	userServicesCache.set(String(userId), {
+		expiresAtMs: Date.now() + USER_SERVICES_TTL_MS,
+		state,
+	});
+}
+
+/**
+ * Checks whether automated Xernerx/Virtue actions (auto profile creation, guild profile creation,
+ * XP/level progression, role rewards, credit rewards) are enabled for a user (`XernerxUser.services !== false`).
+ * Users without a Xernerx account (`xUser === null` and no opt-out tombstone in `virtue/users`) are always allowed (`services: true`).
+ */
+export async function checkUserServices(ws: any, userId: string, userObj?: any): Promise<UserServicesCheckResult> {
+	const id = String(userId || userObj?.id || '').trim();
+	if (!id) {
+		return { allowed: true, services: true, blacklisted: false, userDoc: null, virtueUserDoc: null };
+	}
+
+	const now = Date.now();
+	const cached = userServicesCache.get(id);
+	if (cached && cached.expiresAtMs > now) {
+		return cached.state;
+	}
+
+	if (!ws) {
+		const hasAccountOnObj = Boolean(userObj?.xernerxAccount || userObj?.hasAccount);
+		const blacklisted = Boolean(userObj?.blacklisted);
+		const services = hasAccountOnObj ? userObj?.services !== false : true;
+		return { allowed: services && !blacklisted, services, blacklisted, userDoc: null, virtueUserDoc: null };
+	}
+
+	try {
+		const [xUser, vUser] = await Promise.all([ws.get('xernerx', 'users', { id }).catch(() => null), ws.get('virtue', 'users', { id }).catch(() => null)]);
+
+		// If the user has no Xernerx account and no Virtue opt-out tombstone, they are never locked out.
+		if (!xUser && !vUser) {
+			const state: UserServicesCheckResult = {
+				allowed: true,
+				services: true,
+				blacklisted: false,
+				userDoc: null,
+				virtueUserDoc: null,
+			};
+			userServicesCache.set(id, {
+				expiresAtMs: now + USER_SERVICES_TTL_MS,
+				state,
+			});
+			return state;
+		}
+
+		const blacklisted = Boolean(xUser?.blacklisted || vUser?.blacklisted);
+		const xServicesAllowed = xUser ? xUser.services !== false && !xUser.servicesDisabled : true;
+		const vServicesAllowed = vUser ? vUser.services !== false && !vUser.servicesDisabled : true;
+		const objServicesAllowed = xUser && userObj && typeof userObj.services === 'boolean' ? userObj.services !== false : true;
+		const services = xServicesAllowed && vServicesAllowed && objServicesAllowed;
+
+		const state: UserServicesCheckResult = {
+			allowed: services && !blacklisted,
+			services,
+			blacklisted,
+			userDoc: xUser || null,
+			virtueUserDoc: vUser || null,
+		};
+
+		userServicesCache.set(id, {
+			expiresAtMs: now + USER_SERVICES_TTL_MS,
+			state,
+		});
+		return state;
+	} catch {
+		return { allowed: true, services: true, blacklisted: false, userDoc: null, virtueUserDoc: null };
+	}
 }
 
 /**

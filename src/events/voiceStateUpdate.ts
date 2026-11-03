@@ -6,9 +6,12 @@ import {
 	calculateExperience,
 	calculateLevel,
 	calculateLevelUpCredits,
+	checkUserServices,
 	extractGuildLevelRoles,
 	getMemberServerMultiplier,
 	isChannelFilteredOut,
+	isServicesDisabledDoc,
+	markUserServicesCache,
 	resolveGlobalXpMultiplier,
 	resolveUnifiedServerProgress,
 	syncMemberLevelRoles,
@@ -49,6 +52,8 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 
 	private async getOrCreate(service: string, action: string, query: any) {
 		const ws = (this.client as any).websocket;
+		const isUserScoped = !(service === 'virtue' && action === 'guilds');
+		const targetUserId = isUserScoped ? String(query?.ownerId || query?.id || '') : '';
 
 		let getFailed = false;
 		let data = await ws.get(service, action, query).catch((err: unknown) => {
@@ -57,6 +62,16 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 			return null;
 		});
 
+		if (isUserScoped && isServicesDisabledDoc(data)) {
+			if (targetUserId) {
+				markUserServicesCache(targetUserId, {
+					services: data.services !== false && !data.servicesDisabled,
+					blacklisted: Boolean(data.blacklisted),
+				});
+			}
+			return null;
+		}
+
 		if (!data) {
 			data = await ws.create(service, action, query).catch((err: unknown) => {
 				console.error(`[WS] POST ${service}/${action} failed:`, (err as Error)?.message || err);
@@ -64,8 +79,28 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 			});
 		}
 
+		if (isUserScoped && isServicesDisabledDoc(data)) {
+			if (targetUserId) {
+				markUserServicesCache(targetUserId, {
+					services: data.services !== false && !data.servicesDisabled,
+					blacklisted: Boolean(data.blacklisted),
+				});
+			}
+			return null;
+		}
+
 		if (!data && !getFailed) {
 			data = await ws.update(service, action, query).catch(() => null);
+		}
+
+		if (isUserScoped && isServicesDisabledDoc(data)) {
+			if (targetUserId) {
+				markUserServicesCache(targetUserId, {
+					services: data.services !== false && !data.servicesDisabled,
+					blacklisted: Boolean(data.blacklisted),
+				});
+			}
+			return null;
 		}
 
 		return data ?? null;
@@ -114,7 +149,13 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 		const guildId = state.guild.id;
 		const ws = (this.client as any).websocket;
 
-		const [user, member, voice, rawGuild, , globalXpState] = await Promise.all([
+		const serviceCheck = await checkUserServices(ws, userId, state.member.user);
+		if (!serviceCheck.allowed) {
+			this.sessions.delete(`${guildId}:${userId}`);
+			return;
+		}
+
+		const [user, member, voice, rawGuild, virtueUser, globalXpState] = await Promise.all([
 			this.getOrCreate('xernerx', 'levels', {
 				ownerId: userId,
 			}),
@@ -135,6 +176,10 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 			resolveGlobalXpMultiplier(ws),
 		]);
 
+		if (isServicesDisabledDoc(user) || isServicesDisabledDoc(member) || isServicesDisabledDoc(voice) || isServicesDisabledDoc(virtueUser)) {
+			this.sessions.delete(`${guildId}:${userId}`);
+			return;
+		}
 		if (!user && !member && !voice) return;
 
 		const guild = rawGuild || { id: guildId, mode: 'balanced', levelUp: true };
@@ -175,7 +220,8 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 				const globalCredits = Math.max(1, Math.round(calculateLevelUpCredits('global', userLevel) * creditMultiplier));
 				creditsEarned += globalCredits;
 
-				const profile = await ws.get('xernerx', 'users', { id: userId }).catch(() => null);
+				const profile = serviceCheck.userDoc || (await ws.get('xernerx', 'users', { id: userId }).catch(() => null));
+				if (isServicesDisabledDoc(profile)) return;
 
 				if (profile?.notifications?.virtue?.levelup?.discord) {
 					state.member.user.send(`You went level up! You are now level ${userLevel} (+${globalCredits} credits)`).catch(() => null);
@@ -258,6 +304,7 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 					const creditDoc = await this.getOrCreate('xernerx', 'credits', {
 						ownerId: userId,
 					});
+					if (!creditDoc || isServicesDisabledDoc(creditDoc)) return null;
 					const prevBalance = Number(creditDoc?.balance) || 0;
 					return ws
 						.update('xernerx', 'credits', {
@@ -330,6 +377,13 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 		if (!state?.guild || !state.member || state.member.user.bot) return;
 
 		const key = `${state.guild.id}:${state.member.id}`;
+		const ws = (this.client as any).websocket;
+		const serviceCheck = await checkUserServices(ws, state.member.id, state.member.user);
+		if (!serviceCheck.allowed) {
+			this.sessions.delete(key);
+			return;
+		}
+
 		const now = Date.now();
 		const existing = this.sessions.get(key);
 		const eligibleNow = this.isEligible(newState);

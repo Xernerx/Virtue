@@ -1,5 +1,22 @@
 <!-- @format -->
 
+## 2.3.0
+
+### Minor Changes
+
+- ### Automatic Service Profiles Opt-Out (`XernerxUser.services`) & Blacklist Enforcement
+  
+  - **Automatic Service Profile Opt-Out (`XernerxUser.services`)**:
+    - Added `checkUserServices`, `isServicesDisabledDoc`, and `markUserServicesCache` in `src/lib/levels.ts` with a 15-second in-memory TTL cache to respect the `services` setting (`default: true`) on Xernerx user accounts (`xernerx/users` and `virtue/users` tombstones).
+    - Users without an existing Xernerx Account (`xUser === null` and no opt-out tombstone in `virtue/users`) are never locked out and automatically have their leveling records and Xernerx Account provisioned in the background upon activity, allowing them to sign in later at `account.xernerx.com` to manage or disable automatic service profiles if desired.
+  - **Automated Message & Voice Progression Guards**:
+    - Updated `messageCreate` (`src/events/messageCreate.ts`) and `voiceStateUpdate` (`src/events/voiceStateUpdate.ts`) to verify `checkUserServices` before executing any `getOrCreate` database calls or starting voice sessions.
+    - When `services === false` (or `blacklisted === true`), Virtue completely ignores the user for all automated actions: skipping automatic `xernerx` user/level/credit creation, skipping `virtue` user and guild profile (`levels`, `text`, `voice`) creation, halting XP/message/voice time progression, suppressing level-up announcements and DMs, and skipping automatic Discord level role synchronization.
+    - Hardened `getOrCreate` in both event handlers to detect `servicesDisabled` / tombstone responses and immediately abort without creating or mutating documents.
+  - **Slash & Context Command Handling (`/level`, `/roles`, `/leaderboard`)**:
+    - Updated `/level` (and the `Level` / `User Level` context menu commands) to ignore tombstone/disabled records, skip background unified server level upserts when `services === false`, and display a clear notice when a user with disabled Automatic Service Profiles has no recorded XP.
+    - Updated `/roles` and `/leaderboard` to filter out disabled/tombstone documents when resolving level progress and leaderboard rankings.
+
 ## 2.2.1
 
 ### Patch Changes

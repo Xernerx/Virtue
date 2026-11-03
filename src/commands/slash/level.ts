@@ -3,7 +3,7 @@
 import { SlashCommandBuilder, type SlashCommandOptions } from '@xernerx/framework';
 import { AttachmentBuilder, EmbedBuilder } from 'discord.js';
 import { renderLevelCardPng, resolveUserAccent, type LevelRoleSummary } from '../../lib/levelCard.js';
-import { calculateLevel, extractGuildLevelRoles, resolveUnifiedServerProgress } from '../../lib/levels.js';
+import { calculateLevel, checkUserServices, extractGuildLevelRoles, isServicesDisabledDoc, resolveUnifiedServerProgress } from '../../lib/levels.js';
 
 function formatVoiceTime(totalSeconds: number): string {
 	const secs = Math.max(0, Math.floor(Number(totalSeconds) || 0));
@@ -19,22 +19,32 @@ export async function replyWithLevelCard(ws: any, interaction: any, target: any)
 	const guildId = interaction.guild?.id;
 	const guildName = interaction.guild?.name || 'Server';
 
-	const [user, member, text, voice, guild, accent] = await Promise.all([
+	const [rawUser, rawMember, rawText, rawVoice, guild, accent, serviceCheck] = await Promise.all([
 		ws.get('xernerx', 'levels', { ownerId: target.id }).catch(() => null),
 		ws.get('virtue', 'levels', { id: target.id, guild: guildId }).catch(() => null),
 		ws.get('virtue', 'text', { id: target.id, guild: guildId }).catch(() => null),
 		ws.get('virtue', 'voice', { id: target.id, guild: guildId }).catch(() => null),
 		ws.get('virtue', 'guilds', { id: guildId }).catch(() => null),
 		resolveUserAccent(ws, target.id, interaction.user.id),
+		checkUserServices(ws, target.id, target),
 	]);
+
+	const user = isServicesDisabledDoc(rawUser) ? null : rawUser;
+	const member = isServicesDisabledDoc(rawMember) ? null : rawMember;
+	const text = isServicesDisabledDoc(rawText) ? null : rawText;
+	const voice = isServicesDisabledDoc(rawVoice) ? null : rawVoice;
 
 	if (!user && !member && !text && !voice) {
 		const emptyEmbed = new EmbedBuilder()
 			.setColor(accent.colorInt)
 			.setDescription(
-				target.id === interaction.user.id
-					? 'You have not earned any XP yet — send a message or join a voice channel to start leveling up!'
-					: `**${target.globalName || target.username}** has not earned any XP yet.`
+				!serviceCheck.services
+					? target.id === interaction.user.id
+						? 'You have Automatic Service Profiles disabled in your Xernerx Account settings, so Virtue is not tracking your XP.'
+						: `**${target.globalName || target.username}** has Automatic Service Profiles disabled.`
+					: target.id === interaction.user.id
+						? 'You have not earned any XP yet — send a message or join a voice channel to start leveling up!'
+						: `**${target.globalName || target.username}** has not earned any XP yet.`
 			);
 
 		return interaction.util.reply({
@@ -57,7 +67,7 @@ export async function replyWithLevelCard(ws: any, interaction: any, target: any)
 	const voiceXp = voice?.xp ?? 0;
 	const voiceSeconds = voice?.timeSpent ?? 0;
 
-	if (guildId && (serverLevel > (Number(member?.level) || 0) || (serverLevel === (Number(member?.level) || 0) && serverXp > (Number(member?.xp) || 0)))) {
+	if (serviceCheck.allowed && guildId && (serverLevel > (Number(member?.level) || 0) || (serverLevel === (Number(member?.level) || 0) && serverXp > (Number(member?.xp) || 0)))) {
 		ws.update('virtue', 'levels', { id: target.id, guild: guildId, level: serverLevel, xp: serverXp }).catch(() => null);
 	}
 

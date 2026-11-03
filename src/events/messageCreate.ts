@@ -5,9 +5,12 @@ import {
 	calculateExperience,
 	calculateLevel,
 	calculateLevelUpCredits,
+	checkUserServices,
 	extractGuildLevelRoles,
 	getMemberServerMultiplier,
 	isChannelFilteredOut,
+	isServicesDisabledDoc,
+	markUserServicesCache,
 	resolveGlobalXpMultiplier,
 	resolveUnifiedServerProgress,
 	syncMemberLevelRoles,
@@ -35,6 +38,8 @@ export default class MessageCreateEvent extends EventBuilder {
 
 	private async getOrCreate(service: string, action: string, query: any) {
 		const ws = (this.client as any).websocket;
+		const isUserScoped = !(service === 'virtue' && action === 'guilds');
+		const targetUserId = isUserScoped ? String(query?.ownerId || query?.id || '') : '';
 
 		let getFailed = false;
 		let data = await ws.get(service, action, query).catch((err: unknown) => {
@@ -43,6 +48,16 @@ export default class MessageCreateEvent extends EventBuilder {
 			return null;
 		});
 
+		if (isUserScoped && isServicesDisabledDoc(data)) {
+			if (targetUserId) {
+				markUserServicesCache(targetUserId, {
+					services: data.services !== false && !data.servicesDisabled,
+					blacklisted: Boolean(data.blacklisted),
+				});
+			}
+			return null;
+		}
+
 		if (!data) {
 			data = await ws.create(service, action, query).catch((err: unknown) => {
 				console.error(`[WS] POST ${service}/${action} failed:`, (err as Error)?.message || err);
@@ -50,8 +65,28 @@ export default class MessageCreateEvent extends EventBuilder {
 			});
 		}
 
+		if (isUserScoped && isServicesDisabledDoc(data)) {
+			if (targetUserId) {
+				markUserServicesCache(targetUserId, {
+					services: data.services !== false && !data.servicesDisabled,
+					blacklisted: Boolean(data.blacklisted),
+				});
+			}
+			return null;
+		}
+
 		if (!data && !getFailed) {
 			data = await ws.update(service, action, query).catch(() => null);
+		}
+
+		if (isUserScoped && isServicesDisabledDoc(data)) {
+			if (targetUserId) {
+				markUserServicesCache(targetUserId, {
+					services: data.services !== false && !data.servicesDisabled,
+					blacklisted: Boolean(data.blacklisted),
+				});
+			}
+			return null;
 		}
 
 		return data ?? null;
@@ -73,7 +108,10 @@ export default class MessageCreateEvent extends EventBuilder {
 
 		const ws = (this.client as any).websocket;
 
-		const [user, member, text, rawGuild, , globalXpState] = await Promise.all([
+		const serviceCheck = await checkUserServices(ws, message.author.id, message.user || message.author);
+		if (!serviceCheck.allowed) return;
+
+		const [user, member, text, rawGuild, virtueUser, globalXpState] = await Promise.all([
 			this.getOrCreate('xernerx', 'levels', {
 				ownerId: message.author.id,
 			}),
@@ -94,6 +132,7 @@ export default class MessageCreateEvent extends EventBuilder {
 			resolveGlobalXpMultiplier(ws),
 		]);
 
+		if (isServicesDisabledDoc(user) || isServicesDisabledDoc(member) || isServicesDisabledDoc(text) || isServicesDisabledDoc(virtueUser)) return;
 		if (!user && !member && !text) return;
 
 		const guild = rawGuild || { id: message.guild.id, mode: 'balanced', levelUp: true };
@@ -135,7 +174,8 @@ export default class MessageCreateEvent extends EventBuilder {
 				const globalCredits = Math.max(1, Math.round(calculateLevelUpCredits('global', userLevel) * creditMultiplier));
 				creditsEarned += globalCredits;
 
-				const profile = await ws.get('xernerx', 'users', { id: message.author.id }).catch(() => null);
+				const profile = serviceCheck.userDoc || (await ws.get('xernerx', 'users', { id: message.author.id }).catch(() => null));
+				if (isServicesDisabledDoc(profile)) return;
 
 				if (profile?.notifications?.virtue?.levelup?.discord) {
 					message.author.send(`You went level up! You are now level ${userLevel} (+${globalCredits} credits)`).catch(() => null);
@@ -222,6 +262,7 @@ export default class MessageCreateEvent extends EventBuilder {
 					const creditDoc = await this.getOrCreate('xernerx', 'credits', {
 						ownerId: message.author.id,
 					});
+					if (!creditDoc || isServicesDisabledDoc(creditDoc)) return null;
 					const prevBalance = Number(creditDoc?.balance) || 0;
 					return ws
 						.update('xernerx', 'credits', {
