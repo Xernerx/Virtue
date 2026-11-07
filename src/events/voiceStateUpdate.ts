@@ -1,11 +1,12 @@
 /** @format */
 
-import { EventBuilder } from '@xernerx/framework';
+import { EventBuilder, XernerxUser } from '@xernerx/framework';
 import type { VoiceState } from 'discord.js';
 import {
 	calculateExperience,
 	calculateLevel,
 	calculateLevelUpCredits,
+	checkGuildPremium,
 	checkUserServices,
 	extractGuildLevelRoles,
 	getMemberServerMultiplier,
@@ -15,6 +16,7 @@ import {
 	resolveGlobalXpMultiplier,
 	resolveUnifiedServerProgress,
 	syncMemberLevelRoles,
+	VOICE_STREAMING_XP_MULTIPLIER,
 } from '../lib/levels.js';
 
 const cooldowns = {
@@ -46,8 +48,64 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 		});
 	}
 
-	private isEligible(state: VoiceState) {
+	private isMemberEligible(state: VoiceState) {
 		return Boolean(state?.channelId && state.guild && state.member && !state.member.user.bot && state.channelId !== state.guild.afkChannelId && !state.deaf && !state.selfDeaf);
+	}
+
+	private getEligibleChannelMemberCount(state: VoiceState) {
+		if (!state?.channelId || !state.guild) return 0;
+
+		let count = 0;
+		for (const [, voiceState] of state.guild.voiceStates.cache) {
+			if (voiceState.channelId === state.channelId && this.isMemberEligible(voiceState)) {
+				count++;
+			}
+		}
+
+		return count;
+	}
+
+	private isEligible(state: VoiceState) {
+		return this.isMemberEligible(state) && this.getEligibleChannelMemberCount(state) >= 2;
+	}
+
+	private async syncChannelPeers(guild: VoiceState['guild'], channelId: string | null, excludeUserId: string, now: number) {
+		if (!guild || !channelId || channelId === guild.afkChannelId) return;
+
+		const ws = (this.client as any).websocket;
+
+		for (const [, peerState] of guild.voiceStates.cache) {
+			if (peerState.channelId !== channelId || !peerState.member || peerState.member.user.bot || peerState.member.id === excludeUserId) {
+				continue;
+			}
+
+			const peerId = peerState.member.id;
+			const peerKey = `${guild.id}:${peerId}`;
+			const existingPeer = this.sessions.get(peerKey);
+			const peerEligible = this.isEligible(peerState);
+
+			if (existingPeer && !peerEligible) {
+				this.sessions.delete(peerKey);
+				const elapsed = Math.floor((now - existingPeer.lastSyncedAt) / 1000);
+				if (elapsed > 0) {
+					await this.recordProgress(peerState, elapsed);
+				}
+				continue;
+			}
+
+			if (!existingPeer && peerEligible && peerState.channelId) {
+				const peerXUser = new XernerxUser(this.client as any, peerState.member.user);
+				const peerServiceCheck = await checkUserServices(ws, peerId, peerXUser);
+				if (!peerServiceCheck.allowed) continue;
+
+				this.sessions.set(peerKey, {
+					userId: peerId,
+					guildId: guild.id,
+					channelId: peerState.channelId,
+					lastSyncedAt: now,
+				});
+			}
+		}
 	}
 
 	private async getOrCreate(service: string, action: string, query: any) {
@@ -148,14 +206,15 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 		const userId = state.member.id;
 		const guildId = state.guild.id;
 		const ws = (this.client as any).websocket;
+		const xUser = new XernerxUser(this.client as any, state.member.user);
 
-		const serviceCheck = await checkUserServices(ws, userId, state.member.user);
+		const serviceCheck = await checkUserServices(ws, userId, xUser);
 		if (!serviceCheck.allowed) {
 			this.sessions.delete(`${guildId}:${userId}`);
 			return;
 		}
 
-		const [user, member, voice, rawGuild, virtueUser, globalXpState] = await Promise.all([
+		const [user, member, voice, text, rawGuild, virtueUser, globalXpState, isGuildPremium] = await Promise.all([
 			this.getOrCreate('xernerx', 'levels', {
 				ownerId: userId,
 			}),
@@ -167,6 +226,7 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 				id: userId,
 				guild: guildId,
 			}),
+			ws.get('virtue', 'text', { id: userId, guild: guildId }).catch(() => null),
 			this.getOrCreate('virtue', 'guilds', {
 				id: guildId,
 			}),
@@ -174,6 +234,7 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 				id: userId,
 			}),
 			resolveGlobalXpMultiplier(ws),
+			checkGuildPremium(state.guild),
 		]);
 
 		if (isServicesDisabledDoc(user) || isServicesDisabledDoc(member) || isServicesDisabledDoc(voice) || isServicesDisabledDoc(virtueUser)) {
@@ -184,7 +245,7 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 
 		const guild = rawGuild || { id: guildId, mode: 'balanced', levelUp: true };
 
-		const mode = guild.mode || 'balanced';
+		const mode = isGuildPremium ? guild.mode || 'balanced' : 'balanced';
 		const cooldown = cooldowns[mode as keyof typeof cooldowns] || cooldowns.balanced;
 		const globalCooldown = cooldowns.balanced * 2;
 
@@ -201,8 +262,12 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 
 		const rawGlobalXpGain = calculateExperience('balanced');
 		const rawGuildXpGain = calculateExperience(mode);
-		const globalXpGain = globalXpState.active ? Math.max(1, Math.round(rawGlobalXpGain * globalXpState.multiplier)) : rawGlobalXpGain;
-		const serverMultiplier = getMemberServerMultiplier(state.member, guild, globalXpState);
+		const passMultiplier = serviceCheck.xpMultiplier || 1;
+		const streamingMultiplier = state.streaming ? VOICE_STREAMING_XP_MULTIPLIER : 1;
+		const userVoiceMultiplier = passMultiplier * streamingMultiplier;
+		const globalMult = (globalXpState.active ? globalXpState.multiplier : 1) * userVoiceMultiplier;
+		const globalXpGain = Math.max(1, Math.round(rawGlobalXpGain * globalMult));
+		const serverMultiplier = getMemberServerMultiplier(state.member, guild, globalXpState, isGuildPremium) * userVoiceMultiplier;
 		const guildXpGain = Math.max(1, Math.round(rawGuildXpGain * serverMultiplier));
 		const creditMultiplier = globalXpState.active && globalXpState.scope === 'everything' ? globalXpState.multiplier : 1;
 
@@ -231,15 +296,18 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 
 		// ===== GUILD LEVEL (UNIFIED) & VOICE LEVEL =====
 		const effectiveMember = member || voice;
-		const resolvedServer = resolveUnifiedServerProgress(member, undefined, voice);
+		const resolvedServer = resolveUnifiedServerProgress(member, text, voice);
 		let memberLevel = resolvedServer.level;
 		let memberXp = resolvedServer.xp;
 
 		let voiceLevel = voice?.level ?? 0;
 		let voiceXp = voice?.xp ?? 0;
+		const textLevel = isServicesDisabledDoc(text) ? 0 : (text?.level ?? 0);
 		const timeSpent = (voice?.timeSpent ?? 0) + elapsedSeconds;
 
 		const levelRoles = extractGuildLevelRoles(guild);
+		const hasDynamicRoles = Boolean(guild?.dynamicRoles?.enabled && guild?.dynamicRoles?.anchorRoleId);
+		const leveledUpSteps: Array<{ level: number; credits: number }> = [];
 
 		if (!bypassGuild) {
 			if (effectiveMember) memberXp += guildXpGain;
@@ -258,42 +326,50 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 					memberLevel++;
 					const serverCredits = Math.max(1, Math.round(calculateLevelUpCredits('server', memberLevel) * creditMultiplier));
 					creditsEarned += serverCredits;
-
-					if (guild.levelUp && guild.levelChannel) {
-						const unlockedAtLevel = levelRoles.filter((lr) => lr?.roleId && ((lr.track === 'server' && Number(lr.level) === memberLevel) || (lr.track === 'voice' && Number(lr.level) === voiceLevel)));
-						const highestUnlocked = [...levelRoles]
-							.filter((lr) => lr?.roleId && ((lr.track === 'server' && Number(lr.level) <= memberLevel) || (lr.track === 'voice' && Number(lr.level) <= voiceLevel)))
-							.sort((a, b) => Number(b.level) - Number(a.level))[0];
-						const roleMention = unlockedAtLevel.length > 0 ? unlockedAtLevel.map((lr) => `<@&${lr.roleId}>`).join(', ') : highestUnlocked ? `<@&${highestUnlocked.roleId}>` : '';
-
-						const msg = (guild.levelMessage || '[@mention] reached level [@level] :tada:!')
-							.replace(/\[@mention\]|\{user\}/gi, `${state.member.user}`)
-							.replace(/\[@username\]/gi, state.member.user.globalName || state.member.user.username)
-							.replace(/\[@nickname\]/gi, state.member.nickname || state.member.user.globalName || state.member.user.username)
-							.replace(/\[@level\]|\{level\}/gi, String(memberLevel))
-							.replace(/\[@role\]|\{role\}/gi, roleMention)
-							.replace(/\[@credits\]|\{credits\}/gi, String(serverCredits))
-							.replace(/\[@server\]/gi, state.guild.name);
-
-						await this.client.channels
-							.fetch(guild.levelChannel)
-							.then((c: any) => c?.send(msg))
-							.catch(() => null);
-					}
+					leveledUpSteps.push({ level: memberLevel, credits: serverCredits });
 				}
 			}
 		}
 
-		if (!isIgnored && !isUntracked && !isChannelIgnored && levelRoles.length > 0 && state.member.roles) {
+		if (!isIgnored && !isUntracked && !isChannelIgnored && (levelRoles.length > 0 || hasDynamicRoles) && state.member.roles) {
 			await syncMemberLevelRoles(
 				state.member,
 				guild,
 				{
 					server: memberLevel,
+					text: textLevel,
 					voice: voiceLevel,
 				},
-				['server', 'voice']
+				['server', 'text', 'voice'],
+				{ ws, isGuildPremium }
 			);
+		}
+
+		if (leveledUpSteps.length > 0 && guild.levelUp && guild.levelChannel) {
+			const activeLevelRoles = extractGuildLevelRoles(guild);
+			for (const step of leveledUpSteps) {
+				const unlockedAtLevel = activeLevelRoles.filter(
+					(lr) => lr?.roleId && ((lr.track === 'server' && Number(lr.level) === step.level) || (lr.track === 'voice' && Number(lr.level) === voiceLevel))
+				);
+				const highestUnlocked = [...activeLevelRoles]
+					.filter((lr) => lr?.roleId && ((lr.track === 'server' && Number(lr.level) <= step.level) || (lr.track === 'voice' && Number(lr.level) <= voiceLevel)))
+					.sort((a, b) => Number(b.level) - Number(a.level))[0];
+				const roleMention = unlockedAtLevel.length > 0 ? unlockedAtLevel.map((lr) => `<@&${lr.roleId}>`).join(', ') : highestUnlocked ? `<@&${highestUnlocked.roleId}>` : '';
+
+				const msg = (guild.levelMessage || '[@mention] reached level [@level] :tada:!')
+					.replace(/\[@mention\]|\{user\}/gi, `${state.member.user}`)
+					.replace(/\[@username\]/gi, state.member.user.globalName || state.member.user.username)
+					.replace(/\[@nickname\]/gi, state.member.nickname || state.member.user.globalName || state.member.user.username)
+					.replace(/\[@level\]|\{level\}/gi, String(step.level))
+					.replace(/\[@role\]|\{role\}/gi, roleMention)
+					.replace(/\[@credits\]|\{credits\}/gi, String(step.credits))
+					.replace(/\[@server\]/gi, state.guild.name);
+
+				await this.client.channels
+					.fetch(guild.levelChannel)
+					.then((c: any) => c?.send(msg))
+					.catch(() => null);
+			}
 		}
 
 		const updates: Promise<any>[] = [];
@@ -376,39 +452,52 @@ export default class VoiceStateUpdateEvent extends EventBuilder {
 		const state = newState?.guild ? newState : oldState;
 		if (!state?.guild || !state.member || state.member.user.bot) return;
 
+		const now = Date.now();
 		const key = `${state.guild.id}:${state.member.id}`;
 		const ws = (this.client as any).websocket;
-		const serviceCheck = await checkUserServices(ws, state.member.id, state.member.user);
+		const xUser = new XernerxUser(this.client as any, state.member.user);
+		const serviceCheck = await checkUserServices(ws, state.member.id, xUser);
+
 		if (!serviceCheck.allowed) {
 			this.sessions.delete(key);
-			return;
-		}
+		} else {
+			const existing = this.sessions.get(key);
+			const eligibleNow = this.isEligible(newState);
 
-		const now = Date.now();
-		const existing = this.sessions.get(key);
-		const eligibleNow = this.isEligible(newState);
-
-		if (existing && !eligibleNow) {
-			this.sessions.delete(key);
-			const elapsed = Math.floor((now - existing.lastSyncedAt) / 1000);
-			if (elapsed > 0) {
-				await this.recordProgress(oldState, elapsed);
+			if (existing && !eligibleNow) {
+				this.sessions.delete(key);
+				const elapsed = Math.floor((now - existing.lastSyncedAt) / 1000);
+				if (elapsed > 0) {
+					await this.recordProgress(oldState, elapsed);
+				}
+			} else if (!existing && eligibleNow && newState.channelId) {
+				this.sessions.set(key, {
+					userId: state.member.id,
+					guildId: state.guild.id,
+					channelId: newState.channelId,
+					lastSyncedAt: now,
+				});
+			} else if (existing && eligibleNow && newState.channelId) {
+				const channelChanged = Boolean(oldState.channelId && oldState.channelId !== newState.channelId);
+				const streamingToggled = Boolean(oldState.streaming) !== Boolean(newState.streaming);
+				if (channelChanged || streamingToggled) {
+					const elapsed = Math.floor((now - existing.lastSyncedAt) / 1000);
+					existing.channelId = newState.channelId;
+					existing.lastSyncedAt = now;
+					if (elapsed > 0) {
+						await this.recordProgress(oldState, elapsed);
+					}
+				} else {
+					existing.channelId = newState.channelId;
+				}
 			}
-			return;
 		}
 
-		if (!existing && eligibleNow && newState.channelId) {
-			this.sessions.set(key, {
-				userId: state.member.id,
-				guildId: state.guild.id,
-				channelId: newState.channelId,
-				lastSyncedAt: now,
-			});
-			return;
+		if (oldState.channelId) {
+			await this.syncChannelPeers(state.guild, oldState.channelId, state.member.id, now);
 		}
-
-		if (existing && eligibleNow && newState.channelId) {
-			existing.channelId = newState.channelId;
+		if (newState.channelId && newState.channelId !== oldState.channelId) {
+			await this.syncChannelPeers(state.guild, newState.channelId, state.member.id, now);
 		}
 	}
 }

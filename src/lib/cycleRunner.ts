@@ -1,7 +1,9 @@
 /** @format */
 
 import { EmbedBuilder, GuildScheduledEventEntityType, GuildScheduledEventPrivacyLevel, GuildScheduledEventStatus } from 'discord.js';
+import { pruneDynamicRolesOnCycleReset } from './dynamicRoles.js';
 import { DEFAULT_XERNERX_COLOR } from './levelCard.js';
+import { checkGuildPremium } from './levels.js';
 
 function getIsoWeekKey(date: Date): string {
 	const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -163,6 +165,9 @@ export async function runCycleChecks(client: any) {
 			const { daily, weekly, monthly } = guildDoc.cycles;
 			if (!daily && !weekly && !monthly) continue;
 
+			const isGuildPremium = await checkGuildPremium(discordGuild);
+			if (!isGuildPremium) continue;
+
 			const prevState = guildDoc.cycleState || {};
 			const nextState = {
 				lastDailyReset: prevState.lastDailyReset || null,
@@ -219,6 +224,7 @@ export async function runCycleChecks(client: any) {
 				const bulkRes = await ws.update('virtue', 'levels', { guild: guildId, resetGuild: true }).catch(() => null);
 				await ws.update('virtue', 'text', { guild: guildId, resetGuild: true }).catch(() => null);
 				await ws.update('virtue', 'voice', { guild: guildId, resetGuild: true }).catch(() => null);
+				await pruneDynamicRolesOnCycleReset(discordGuild, guildDoc, ws).catch(() => null);
 
 				if (!bulkRes?.success && sorted.length > 0) {
 					await Promise.all(

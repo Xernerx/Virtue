@@ -1,5 +1,8 @@
 /** @format */
 
+import { XernerxUser } from '@xernerx/framework';
+import { syncDynamicGuildRoles } from './dynamicRoles.js';
+
 const factors = {
 	easy: { a: 1, b: 20 },
 	casual: { a: 3, b: 40 },
@@ -39,10 +42,68 @@ export function resolveUnifiedServerProgress(member: any, text?: any, voice?: an
 	return candidates[0] || { level: 0, xp: 0 };
 }
 
+export const REVIEW_XP_BONUS = 0.05;
+export const VOTE_XP_BONUS = 0.1;
+export const PREMIUM_PASS_XP_BONUS = 0.5;
+export const PREMIUM_PASS_XP_MULTIPLIER = 1.5;
+export const VOICE_STREAMING_XP_MULTIPLIER = 1.25;
+
+const VIRTUE_OR_ULTRA_IDS = new Set([
+	'ultra',
+	'bot-virtue',
+	'virtue',
+	'credit_trial_ultra',
+	'credit_trial_bot-virtue',
+	'staff_infinite_sub',
+	'prod_V0pD5uXoTQkrYS',
+	'prod_V0pRf7S9w9Pjb9',
+	'price_1UAA6hH0UrDYoToMPWTsgJjD',
+	'price_1U0ncoH0UrDYoToMQ6aTtz1G',
+	'price_1U0nbeH0UrDYoToM58B2ZmMf',
+	'price_1U0naEH0UrDYoToMfc7L97AA',
+	'price_1U0nYcH0UrDYoToMXWxPAoSN',
+	'price_1U0oO5Ha7VTBTnBRtBVH5oKP',
+	'price_1U0no9H0UrDYoToMv1buQ3KM',
+	'price_1U0nmvH0UrDYoToM1yWyPkEz',
+	'price_1U0oO5Ha7VTBTnBRaUwYmdkk',
+]);
+
+export function hasVirtueOrUltraPass(xUser: any, subDoc?: any, now = Date.now()): boolean {
+	if (!xUser && !subDoc) return false;
+	if (xUser?.staffSubscription === true) return true;
+
+	const rawSubs: any[] = [
+		...(Array.isArray(xUser?.subscriptions) ? xUser.subscriptions : []),
+		...(Array.isArray(xUser?.billing?.subscriptions) ? xUser.billing.subscriptions : []),
+		...(Array.isArray(subDoc) ? subDoc : subDoc && typeof subDoc === 'object' ? [subDoc] : []),
+	];
+
+	return rawSubs.some((sub) => {
+		if (!sub || (sub.status !== 'active' && sub.status !== 'trialing')) return false;
+		if (sub.currentPeriodEnd) {
+			const endMs = new Date(sub.currentPeriodEnd).getTime();
+			if (!Number.isNaN(endMs) && endMs <= now) return false;
+		}
+		const priceId = String(sub.priceId || '').trim();
+		const subId = String(sub.stripeSubscriptionId || '').trim();
+		const lowerPrice = priceId.toLowerCase();
+		const lowerSub = subId.toLowerCase();
+		return (
+			VIRTUE_OR_ULTRA_IDS.has(priceId) || VIRTUE_OR_ULTRA_IDS.has(subId) || lowerPrice.includes('ultra') || lowerPrice.includes('virtue') || lowerSub.includes('ultra') || lowerSub.includes('virtue')
+		);
+	});
+}
+
 export interface UserServicesCheckResult {
 	allowed: boolean;
 	services: boolean;
 	blacklisted: boolean;
+	hasPremiumPass: boolean;
+	voted: boolean;
+	nextVoteAt: string | null;
+	reviewed: boolean;
+	rating: number | null;
+	xpMultiplier: number;
 	userDoc: any;
 	virtueUserDoc: any;
 }
@@ -55,16 +116,46 @@ export function isServicesDisabledDoc(doc: any): boolean {
 	return doc.services === false || doc.servicesDisabled === true || doc.blacklisted === true;
 }
 
-export function markUserServicesCache(userId: string, partial: { services?: boolean; blacklisted?: boolean; userDoc?: any; virtueUserDoc?: any }) {
+export function computePersonalXpMultiplier(flags: { hasPremiumPass?: boolean; voted?: boolean; reviewed?: boolean }): number {
+	const bonus = (flags.hasPremiumPass ? PREMIUM_PASS_XP_BONUS : 0) + (flags.voted ? VOTE_XP_BONUS : 0) + (flags.reviewed ? REVIEW_XP_BONUS : 0);
+	return Number((1 + bonus).toFixed(2));
+}
+
+export function markUserServicesCache(
+	userId: string,
+	partial: {
+		services?: boolean;
+		blacklisted?: boolean;
+		hasPremiumPass?: boolean;
+		voted?: boolean;
+		nextVoteAt?: string | null;
+		reviewed?: boolean;
+		rating?: number | null;
+		userDoc?: any;
+		virtueUserDoc?: any;
+	}
+) {
 	if (!userId) return;
+	const existing = userServicesCache.get(String(userId))?.state;
 	const services = partial.services !== false;
 	const blacklisted = Boolean(partial.blacklisted);
+	const hasPremiumPass = partial.hasPremiumPass ?? existing?.hasPremiumPass ?? hasVirtueOrUltraPass(partial.userDoc ?? existing?.userDoc);
+	const voted = partial.voted ?? existing?.voted ?? false;
+	const nextVoteAt = partial.nextVoteAt !== undefined ? partial.nextVoteAt : (existing?.nextVoteAt ?? null);
+	const reviewed = partial.reviewed ?? existing?.reviewed ?? false;
+	const rating = partial.rating !== undefined ? partial.rating : (existing?.rating ?? null);
 	const state: UserServicesCheckResult = {
 		allowed: services && !blacklisted,
 		services,
 		blacklisted,
-		userDoc: partial.userDoc ?? null,
-		virtueUserDoc: partial.virtueUserDoc ?? null,
+		hasPremiumPass,
+		voted,
+		nextVoteAt,
+		reviewed,
+		rating,
+		xpMultiplier: computePersonalXpMultiplier({ hasPremiumPass, voted, reviewed }),
+		userDoc: partial.userDoc ?? existing?.userDoc ?? null,
+		virtueUserDoc: partial.virtueUserDoc ?? existing?.virtueUserDoc ?? null,
 	};
 	userServicesCache.set(String(userId), {
 		expiresAtMs: Date.now() + USER_SERVICES_TTL_MS,
@@ -74,30 +165,81 @@ export function markUserServicesCache(userId: string, partial: { services?: bool
 
 /**
  * Checks whether automated Xernerx/Virtue actions (auto profile creation, guild profile creation,
- * XP/level progression, role rewards, credit rewards) are enabled for a user (`XernerxUser.services !== false`).
+ * XP/level progression, role rewards, credit rewards) are enabled for a user (`XernerxUser.services !== false`),
+ * and resolves whether the user holds an active Virtue Pass or Ultra subscription, vote boost, or review boost (`xpMultiplier`).
  * Users without a Xernerx account (`xUser === null` and no opt-out tombstone in `virtue/users`) are always allowed (`services: true`).
  */
-export async function checkUserServices(ws: any, userId: string, userObj?: any): Promise<UserServicesCheckResult> {
+export async function checkUserServices(ws: any, userId: string, userObj?: any, options?: { forceRefresh?: boolean }): Promise<UserServicesCheckResult> {
 	const id = String(userId || userObj?.id || '').trim();
 	if (!id) {
-		return { allowed: true, services: true, blacklisted: false, userDoc: null, virtueUserDoc: null };
+		return {
+			allowed: true,
+			services: true,
+			blacklisted: false,
+			hasPremiumPass: false,
+			voted: false,
+			nextVoteAt: null,
+			reviewed: false,
+			rating: null,
+			xpMultiplier: 1,
+			userDoc: null,
+			virtueUserDoc: null,
+		};
 	}
 
 	const now = Date.now();
-	const cached = userServicesCache.get(id);
+	const cached = !options?.forceRefresh ? userServicesCache.get(id) : null;
 	if (cached && cached.expiresAtMs > now) {
 		return cached.state;
 	}
 
 	if (!ws) {
+		if (typeof userObj?.fetchEngagement === 'function') {
+			await userObj.fetchEngagement(Boolean(options?.forceRefresh)).catch(() => null);
+		}
 		const hasAccountOnObj = Boolean(userObj?.xernerxAccount || userObj?.hasAccount);
 		const blacklisted = Boolean(userObj?.blacklisted);
 		const services = hasAccountOnObj ? userObj?.services !== false : true;
-		return { allowed: services && !blacklisted, services, blacklisted, userDoc: null, virtueUserDoc: null };
+		const voted = Boolean(userObj?.voted);
+		const nextVoteAt = userObj?.nextVoteAt ?? null;
+		const reviewed = Boolean(userObj?.reviewed);
+		const rating = userObj?.rating ?? null;
+		let hasPremiumPass = false;
+		if (typeof userObj?.premium === 'function') {
+			hasPremiumPass = Boolean(await userObj.premium().catch(() => false));
+		}
+		return {
+			allowed: services && !blacklisted,
+			services,
+			blacklisted,
+			hasPremiumPass,
+			voted,
+			nextVoteAt,
+			reviewed,
+			rating,
+			xpMultiplier: computePersonalXpMultiplier({ hasPremiumPass, voted, reviewed }),
+			userDoc: null,
+			virtueUserDoc: null,
+		};
 	}
 
 	try {
-		const [xUser, vUser] = await Promise.all([ws.get('xernerx', 'users', { id }).catch(() => null), ws.get('virtue', 'users', { id }).catch(() => null)]);
+		const [xUser, vUser, subDoc] = await Promise.all([
+			ws.get('xernerx', 'users', { id }).catch(() => null),
+			ws.get('virtue', 'users', { id }).catch(() => null),
+			ws.get('xernerx', 'subscriptions', { ownerId: id }).catch(() => null),
+			typeof userObj?.fetchEngagement === 'function' ? userObj.fetchEngagement(Boolean(options?.forceRefresh)).catch(() => null) : Promise.resolve(null),
+		]);
+
+		let hasPremiumPass = hasVirtueOrUltraPass(xUser, subDoc, now);
+		if (!hasPremiumPass && typeof userObj?.premium === 'function') {
+			hasPremiumPass = Boolean(await userObj.premium().catch(() => false));
+		}
+		const voted = Boolean(userObj?.voted);
+		const nextVoteAt = userObj?.nextVoteAt ?? null;
+		const reviewed = Boolean(userObj?.reviewed);
+		const rating = userObj?.rating ?? null;
+		const xpMultiplier = computePersonalXpMultiplier({ hasPremiumPass, voted, reviewed });
 
 		// If the user has no Xernerx account and no Virtue opt-out tombstone, they are never locked out.
 		if (!xUser && !vUser) {
@@ -105,6 +247,12 @@ export async function checkUserServices(ws: any, userId: string, userObj?: any):
 				allowed: true,
 				services: true,
 				blacklisted: false,
+				hasPremiumPass,
+				voted,
+				nextVoteAt,
+				reviewed,
+				rating,
+				xpMultiplier,
 				userDoc: null,
 				virtueUserDoc: null,
 			};
@@ -125,6 +273,12 @@ export async function checkUserServices(ws: any, userId: string, userObj?: any):
 			allowed: services && !blacklisted,
 			services,
 			blacklisted,
+			hasPremiumPass,
+			voted,
+			nextVoteAt,
+			reviewed,
+			rating,
+			xpMultiplier,
 			userDoc: xUser || null,
 			virtueUserDoc: vUser || null,
 		};
@@ -135,7 +289,19 @@ export async function checkUserServices(ws: any, userId: string, userObj?: any):
 		});
 		return state;
 	} catch {
-		return { allowed: true, services: true, blacklisted: false, userDoc: null, virtueUserDoc: null };
+		return {
+			allowed: true,
+			services: true,
+			blacklisted: false,
+			hasPremiumPass: false,
+			voted: false,
+			nextVoteAt: null,
+			reviewed: false,
+			rating: null,
+			xpMultiplier: 1,
+			userDoc: null,
+			virtueUserDoc: null,
+		};
 	}
 }
 
@@ -182,6 +348,29 @@ export function normalizeRoleTrack(rawTrack?: string | null): LevelRoleTrack {
 
 export function extractGuildLevelRoles(guild: any): GuildLevelRoleEntry[] {
 	if (!guild || typeof guild !== 'object') return [];
+
+	if (guild.dynamicRoles?.enabled && guild.dynamicRoles?.anchorRoleId) {
+		const dynTrack = normalizeRoleTrack(guild.dynamicRoles.track);
+		const anchorRoleId = String(guild.dynamicRoles.anchorRoleId).trim();
+		const dynEntries: GuildLevelRoleEntry[] = [{ level: 1, roleId: anchorRoleId, track: dynTrack }];
+		if (Array.isArray(guild.dynamicRoles.managed)) {
+			for (const item of guild.dynamicRoles.managed) {
+				const roleId = String(item?.roleId || '').trim();
+				const level = Number(item?.level);
+				if (!roleId || !Number.isFinite(level) || level <= 0) continue;
+				dynEntries.push({ level, roleId, track: dynTrack });
+			}
+		}
+		const seenDyn = new Set<string>();
+		return dynEntries
+			.filter((entry) => {
+				const key = `${entry.track}:${entry.level}`;
+				if (seenDyn.has(key)) return false;
+				seenDyn.add(key);
+				return true;
+			})
+			.sort((a, b) => a.level - b.level);
+	}
 
 	const combined: GuildLevelRoleEntry[] = [];
 	const pushEntries = (arr: any, fallbackTrack: LevelRoleTrack) => {
@@ -303,10 +492,39 @@ export function isChannelFilteredOut(guild: any, channelId?: string | null, pare
 	return false;
 }
 
-export function getMemberServerMultiplier(member: any, guildDoc: any, globalState: GlobalXpMultiplierState): number {
+const guildPremiumCache = new Map<string, { expiresAtMs: number; premium: boolean }>();
+const GUILD_PREMIUM_TTL_MS = 60_000;
+
+export async function checkGuildPremium(discordGuild: any): Promise<boolean> {
+	const guildId = String(discordGuild?.id || '').trim();
+	const ownerId = String(discordGuild?.ownerId || '').trim();
+	if (!guildId || !ownerId || !discordGuild?.client) return false;
+
+	const now = Date.now();
+	const cached = guildPremiumCache.get(guildId);
+	if (cached && cached.expiresAtMs > now) {
+		return cached.premium;
+	}
+
+	try {
+		const ws = (discordGuild.client as any).websocket;
+		const xOwner = new XernerxUser(discordGuild.client as any, { id: ownerId } as any);
+		const ownerCheck = await checkUserServices(ws, ownerId, xOwner);
+		let premium = Boolean(ownerCheck.hasPremiumPass);
+		if (!premium) {
+			premium = Boolean(await xOwner.premium().catch(() => false));
+		}
+		guildPremiumCache.set(guildId, { expiresAtMs: now + GUILD_PREMIUM_TTL_MS, premium });
+		return premium;
+	} catch {
+		return false;
+	}
+}
+
+export function getMemberServerMultiplier(member: any, guildDoc: any, globalState: GlobalXpMultiplierState, isGuildPremium = false): number {
 	let mult = Math.max(1, Number(guildDoc?.xpMultiplier) || 1);
 
-	const boosterMult = Math.max(1, Number(guildDoc?.boosterMultiplier) || 1);
+	const boosterMult = isGuildPremium ? Math.max(1, Number(guildDoc?.boosterMultiplier) || 1) : 1;
 	if (boosterMult > 1 && member) {
 		const premiumRoleId = member.guild?.roles?.premiumSubscriberRole?.id;
 		const isBooster = Boolean(member.premiumSince) || Boolean(premiumRoleId && member.roles?.cache?.has(premiumRoleId));
@@ -322,14 +540,30 @@ export function getMemberServerMultiplier(member: any, guildDoc: any, globalStat
 	return mult;
 }
 
-export async function syncMemberLevelRoles(member: any, guildDoc: any, levels: { server: number; text?: number; voice?: number }, activeTracks: LevelRoleTrack[] = ['server', 'text', 'voice']) {
+export async function syncMemberLevelRoles(
+	member: any,
+	guildDoc: any,
+	levels: { server: number; text?: number; voice?: number },
+	activeTracks: LevelRoleTrack[] = ['server', 'text', 'voice'],
+	options?: { ws?: any; isGuildPremium?: boolean }
+) {
 	if (!member?.roles?.cache) return;
+
+	if (guildDoc?.dynamicRoles?.enabled && guildDoc?.dynamicRoles?.anchorRoleId) {
+		await syncDynamicGuildRoles({
+			member,
+			guildDoc,
+			levels,
+			ws: options?.ws,
+			isGuildPremium: Boolean(options?.isGuildPremium),
+		});
+		return;
+	}
+
 	const levelRoles = extractGuildLevelRoles(guildDoc);
 	if (levelRoles.length === 0) return;
 
 	const stackRoles = guildDoc?.stackRoles !== false;
-	const toAdd = new Set<string>();
-	const toRemove = new Set<string>();
 
 	const getTrackLevel = (track: LevelRoleTrack) => {
 		if (track === 'text') return levels.text ?? 0;
@@ -337,40 +571,79 @@ export async function syncMemberLevelRoles(member: any, guildDoc: any, levels: {
 		return levels.server ?? 0;
 	};
 
-	for (const track of activeTracks) {
-		const trackEntries = levelRoles.filter((lr) => lr.track === track && lr.roleId && lr.level > 0);
-		if (trackEntries.length === 0) continue;
+	const computeDiff = (targetMember: any) => {
+		const toAdd = new Set<string>();
+		const toRemove = new Set<string>();
+		const shouldKeep = new Set<string>();
 
-		const currentLvl = getTrackLevel(track);
-		const unlocked = trackEntries.filter((lr) => lr.level <= currentLvl);
+		for (const track of activeTracks) {
+			const trackEntries = levelRoles.filter((lr) => lr.track === track && lr.roleId && lr.level > 0);
+			if (trackEntries.length === 0) continue;
 
-		if (stackRoles) {
-			for (const lr of unlocked) {
-				if (!member.roles.cache.has(lr.roleId)) {
-					toAdd.add(lr.roleId);
+			const currentLvl = getTrackLevel(track);
+			const unlocked = trackEntries.filter((lr) => lr.level <= currentLvl);
+
+			if (stackRoles) {
+				for (const lr of unlocked) {
+					shouldKeep.add(lr.roleId);
+					if (!targetMember.roles.cache.has(lr.roleId)) {
+						toAdd.add(lr.roleId);
+					}
 				}
-			}
-		} else {
-			const highest = unlocked[unlocked.length - 1];
-			if (highest && !member.roles.cache.has(highest.roleId)) {
-				toAdd.add(highest.roleId);
-			}
-			for (const lr of trackEntries) {
-				if ((!highest || lr.roleId !== highest.roleId) && member.roles.cache.has(lr.roleId)) {
-					toRemove.add(lr.roleId);
+			} else {
+				const highestLevel = unlocked[unlocked.length - 1]?.level;
+				const highestEntries = highestLevel !== undefined ? unlocked.filter((lr) => lr.level === highestLevel) : [];
+				for (const lr of highestEntries) {
+					shouldKeep.add(lr.roleId);
+					if (!targetMember.roles.cache.has(lr.roleId)) {
+						toAdd.add(lr.roleId);
+					}
+				}
+				for (const lr of trackEntries) {
+					if (!shouldKeep.has(lr.roleId) && targetMember.roles.cache.has(lr.roleId)) {
+						toRemove.add(lr.roleId);
+					}
 				}
 			}
 		}
+
+		for (const id of shouldKeep) {
+			toRemove.delete(id);
+		}
+
+		return { toAdd, toRemove };
+	};
+
+	let { toAdd, toRemove } = computeDiff(member);
+	if (toAdd.size === 0 && toRemove.size === 0) return;
+
+	// Refresh member from Discord API before mutating roles since GuildMembers intent is not enabled
+	// and cached voiceState/message member._roles may be stale.
+	const freshMember = typeof member.fetch === 'function' ? await member.fetch(true).catch(() => member) : member;
+	if (freshMember && Array.isArray(freshMember._roles) && Array.isArray(member._roles)) {
+		member._roles = [...freshMember._roles];
 	}
 
-	for (const id of toAdd) {
-		toRemove.delete(id);
+	({ toAdd, toRemove } = computeDiff(freshMember || member));
+	if (toAdd.size === 0 && toRemove.size === 0) return;
+
+	const target = freshMember || member;
+
+	// Use single-role add/remove calls so Discord's atomic PUT/DELETE role endpoints are used
+	// rather than PATCHing the entire member roles array with potentially stale cache state.
+	for (const roleId of toAdd) {
+		const res = await target.roles.add(roleId).catch(() => null);
+		if (res) {
+			if (Array.isArray(target._roles) && !target._roles.includes(roleId)) target._roles.push(roleId);
+			if (Array.isArray(member._roles) && !member._roles.includes(roleId)) member._roles.push(roleId);
+		}
 	}
 
-	if (toAdd.size > 0) {
-		await member.roles.add(Array.from(toAdd)).catch(() => null);
-	}
-	if (toRemove.size > 0) {
-		await member.roles.remove(Array.from(toRemove)).catch(() => null);
+	for (const roleId of toRemove) {
+		const res = await target.roles.remove(roleId).catch(() => null);
+		if (res) {
+			if (Array.isArray(target._roles)) target._roles = target._roles.filter((id: string) => id !== roleId);
+			if (Array.isArray(member._roles)) member._roles = member._roles.filter((id: string) => id !== roleId);
+		}
 	}
 }

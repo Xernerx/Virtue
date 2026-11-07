@@ -1,10 +1,11 @@
 /** @format */
 
-import { EventBuilder } from '@xernerx/framework';
+import { EventBuilder, XernerxUser } from '@xernerx/framework';
 import {
 	calculateExperience,
 	calculateLevel,
 	calculateLevelUpCredits,
+	checkGuildPremium,
 	checkUserServices,
 	extractGuildLevelRoles,
 	getMemberServerMultiplier,
@@ -107,11 +108,14 @@ export default class MessageCreateEvent extends EventBuilder {
 		if (!message.guild || message.author.bot || message.system) return;
 
 		const ws = (this.client as any).websocket;
+		if (!message.user) {
+			message.user = new XernerxUser(this.client as any, message.author);
+		}
 
-		const serviceCheck = await checkUserServices(ws, message.author.id, message.user || message.author);
+		const serviceCheck = await checkUserServices(ws, message.author.id, message.user);
 		if (!serviceCheck.allowed) return;
 
-		const [user, member, text, rawGuild, virtueUser, globalXpState] = await Promise.all([
+		const [user, member, text, voice, rawGuild, virtueUser, globalXpState, isGuildPremium] = await Promise.all([
 			this.getOrCreate('xernerx', 'levels', {
 				ownerId: message.author.id,
 			}),
@@ -123,6 +127,7 @@ export default class MessageCreateEvent extends EventBuilder {
 				id: message.author.id,
 				guild: message.guild.id,
 			}),
+			ws.get('virtue', 'voice', { id: message.author.id, guild: message.guild.id }).catch(() => null),
 			this.getOrCreate('virtue', 'guilds', {
 				id: message.guild.id,
 			}),
@@ -130,6 +135,7 @@ export default class MessageCreateEvent extends EventBuilder {
 				id: message.author.id,
 			}),
 			resolveGlobalXpMultiplier(ws),
+			checkGuildPremium(message.guild),
 		]);
 
 		if (isServicesDisabledDoc(user) || isServicesDisabledDoc(member) || isServicesDisabledDoc(text) || isServicesDisabledDoc(virtueUser)) return;
@@ -137,7 +143,7 @@ export default class MessageCreateEvent extends EventBuilder {
 
 		const guild = rawGuild || { id: message.guild.id, mode: 'balanced', levelUp: true };
 
-		const mode = guild.mode || 'balanced';
+		const mode = isGuildPremium ? guild.mode || 'balanced' : 'balanced';
 		const cooldown = cooldowns[mode as keyof typeof cooldowns] || cooldowns.balanced;
 
 		const globalCooldown = cooldowns.balanced * 2;
@@ -155,8 +161,10 @@ export default class MessageCreateEvent extends EventBuilder {
 
 		const rawGlobalXpGain = calculateExperience('balanced');
 		const rawGuildXpGain = calculateExperience(mode);
-		const globalXpGain = globalXpState.active ? Math.max(1, Math.round(rawGlobalXpGain * globalXpState.multiplier)) : rawGlobalXpGain;
-		const serverMultiplier = getMemberServerMultiplier(message.member, guild, globalXpState);
+		const passMultiplier = serviceCheck.xpMultiplier || 1;
+		const globalMult = (globalXpState.active ? globalXpState.multiplier : 1) * passMultiplier;
+		const globalXpGain = Math.max(1, Math.round(rawGlobalXpGain * globalMult));
+		const serverMultiplier = getMemberServerMultiplier(message.member, guild, globalXpState, isGuildPremium) * passMultiplier;
 		const guildXpGain = Math.max(1, Math.round(rawGuildXpGain * serverMultiplier));
 		const creditMultiplier = globalXpState.active && globalXpState.scope === 'everything' ? globalXpState.multiplier : 1;
 
@@ -185,15 +193,18 @@ export default class MessageCreateEvent extends EventBuilder {
 
 		// ===== GUILD LEVEL (UNIFIED) & TEXT LEVEL =====
 		const effectiveMember = member || text;
-		const resolvedServer = resolveUnifiedServerProgress(member, text);
+		const resolvedServer = resolveUnifiedServerProgress(member, text, voice);
 		let memberLevel = resolvedServer.level;
 		let memberXp = resolvedServer.xp;
 
 		let textLevel = text?.level ?? 0;
 		let textXp = text?.xp ?? 0;
+		const voiceLevel = isServicesDisabledDoc(voice) ? 0 : (voice?.level ?? 0);
 		const textMessages = (text?.messages ?? 0) + 1;
 
 		const levelRoles = extractGuildLevelRoles(guild);
+		const hasDynamicRoles = Boolean(guild?.dynamicRoles?.enabled && guild?.dynamicRoles?.anchorRoleId);
+		const leveledUpSteps: Array<{ level: number; credits: number }> = [];
 
 		if (!bypassGuild) {
 			if (effectiveMember) memberXp += guildXpGain;
@@ -212,46 +223,52 @@ export default class MessageCreateEvent extends EventBuilder {
 					memberLevel++;
 					const serverCredits = Math.max(1, Math.round(calculateLevelUpCredits('server', memberLevel) * creditMultiplier));
 					creditsEarned += serverCredits;
-
-					if (guild.levelUp) {
-						const unlockedAtLevel = levelRoles.filter((lr) => lr?.roleId && ((lr.track === 'server' && Number(lr.level) === memberLevel) || (lr.track === 'text' && Number(lr.level) === textLevel)));
-						const highestUnlocked = [...levelRoles]
-							.filter((lr) => lr?.roleId && ((lr.track === 'server' && Number(lr.level) <= memberLevel) || (lr.track === 'text' && Number(lr.level) <= textLevel)))
-							.sort((a, b) => Number(b.level) - Number(a.level))[0];
-						const roleMention = unlockedAtLevel.length > 0 ? unlockedAtLevel.map((lr) => `<@&${lr.roleId}>`).join(', ') : highestUnlocked ? `<@&${highestUnlocked.roleId}>` : '';
-
-						const msg = (guild.levelMessage || '[@mention] reached level [@level] :tada:!')
-							.replace(/\[@mention\]|\{user\}/gi, `${message.author}`)
-							.replace(/\[@username\]/gi, message.author.globalName || message.author.username)
-							.replace(/\[@nickname\]/gi, message.member?.nickname || message.author.globalName || message.author.username)
-							.replace(/\[@level\]|\{level\}/gi, String(memberLevel))
-							.replace(/\[@role\]|\{role\}/gi, roleMention)
-							.replace(/\[@credits\]|\{credits\}/gi, String(serverCredits))
-							.replace(/\[@server\]/gi, message.guild.name);
-
-						const m = guild.levelChannel
-							? await message.client.channels
-									.fetch(guild.levelChannel)
-									.then((c: any) => c?.send(msg))
-									.catch(() => null)
-							: await message.reply(msg).catch(() => null);
-
-						if (m && guild.autoDelete && !guild.levelChannel) setTimeout(() => m.delete().catch(() => true), guild.autoDelete * 1000);
-					}
+					leveledUpSteps.push({ level: memberLevel, credits: serverCredits });
 				}
 			}
 		}
 
-		if (!isIgnored && !isUntracked && !isChannelIgnored && levelRoles.length > 0 && message.member?.roles) {
+		if (!isIgnored && !isUntracked && !isChannelIgnored && (levelRoles.length > 0 || hasDynamicRoles) && message.member?.roles) {
 			await syncMemberLevelRoles(
 				message.member,
 				guild,
 				{
 					server: memberLevel,
 					text: textLevel,
+					voice: voiceLevel,
 				},
-				['server', 'text']
+				['server', 'text', 'voice'],
+				{ ws, isGuildPremium }
 			);
+		}
+
+		if (leveledUpSteps.length > 0 && guild.levelUp) {
+			const activeLevelRoles = extractGuildLevelRoles(guild);
+			for (const step of leveledUpSteps) {
+				const unlockedAtLevel = activeLevelRoles.filter((lr) => lr?.roleId && ((lr.track === 'server' && Number(lr.level) === step.level) || (lr.track === 'text' && Number(lr.level) === textLevel)));
+				const highestUnlocked = [...activeLevelRoles]
+					.filter((lr) => lr?.roleId && ((lr.track === 'server' && Number(lr.level) <= step.level) || (lr.track === 'text' && Number(lr.level) <= textLevel)))
+					.sort((a, b) => Number(b.level) - Number(a.level))[0];
+				const roleMention = unlockedAtLevel.length > 0 ? unlockedAtLevel.map((lr) => `<@&${lr.roleId}>`).join(', ') : highestUnlocked ? `<@&${highestUnlocked.roleId}>` : '';
+
+				const msg = (guild.levelMessage || '[@mention] reached level [@level] :tada:!')
+					.replace(/\[@mention\]|\{user\}/gi, `${message.author}`)
+					.replace(/\[@username\]/gi, message.author.globalName || message.author.username)
+					.replace(/\[@nickname\]/gi, message.member?.nickname || message.author.globalName || message.author.username)
+					.replace(/\[@level\]|\{level\}/gi, String(step.level))
+					.replace(/\[@role\]|\{role\}/gi, roleMention)
+					.replace(/\[@credits\]|\{credits\}/gi, String(step.credits))
+					.replace(/\[@server\]/gi, message.guild.name);
+
+				const m = guild.levelChannel
+					? await message.client.channels
+							.fetch(guild.levelChannel)
+							.then((c: any) => c?.send(msg))
+							.catch(() => null)
+					: await message.reply(msg).catch(() => null);
+
+				if (m && guild.autoDelete && !guild.levelChannel) setTimeout(() => m.delete().catch(() => true), guild.autoDelete * 1000);
+			}
 		}
 
 		const updates: Promise<any>[] = [];

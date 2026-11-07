@@ -1,5 +1,11 @@
 <!-- @format -->
 
+## 2.4.0
+
+### Minor Changes
+
+- Add Dynamic Hoist Level Roles engine, `/boost` slash command, and stackable review (+5%), vote (+10%), and subscription (+50%) XP boosts.
+
 ## 2.3.0
 
 ### Minor Changes
