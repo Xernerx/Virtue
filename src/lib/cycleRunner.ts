@@ -56,8 +56,27 @@ async function syncGlobalXpScheduledEvent(client: any) {
 		const parsed = typeof rawVal === 'string' ? JSON.parse(rawVal) : rawVal;
 		if (!parsed || typeof parsed !== 'object') return;
 
-		const targetGuildId = String(parsed.targetGuildId || parsed.discordEventGuildId || adminServerDoc?.value || '').trim();
-		const discordGuild = (targetGuildId ? client.guilds.cache.get(targetGuildId) : null) || client.guilds.cache.first();
+		if (globalGuildDoc?.levelMessage && typeof globalGuildDoc.levelMessage === 'string' && globalGuildDoc.levelMessage.trim().startsWith('{')) {
+			try {
+				const fallbackParsed = JSON.parse(globalGuildDoc.levelMessage);
+				if (!parsed.discordEventId && fallbackParsed?.discordEventId) {
+					parsed.discordEventId = fallbackParsed.discordEventId;
+				}
+				if (!parsed.targetGuildId && fallbackParsed?.targetGuildId) {
+					parsed.targetGuildId = fallbackParsed.targetGuildId;
+				}
+				if (!parsed.discordEventGuildId && fallbackParsed?.discordEventGuildId) {
+					parsed.discordEventGuildId = fallbackParsed.discordEventGuildId;
+				}
+			} catch {}
+		}
+
+		const canonicalTargetGuildId = String(parsed.targetGuildId || adminServerDoc?.value || parsed.discordEventGuildId || '').trim();
+		if (!canonicalTargetGuildId) return;
+
+		// Never fall back to client.guilds.cache.first() — if this bot instance (e.g. Virtue Beta) is not in the target server,
+		// falling back to another server creates an event in the wrong guild and causes both bots to ping-pong duplicate events.
+		const discordGuild = client.guilds.cache.get(canonicalTargetGuildId);
 		if (!discordGuild?.scheduledEvents) return;
 
 		const now = Date.now();
@@ -65,9 +84,26 @@ async function syncGlobalXpScheduledEvent(client: any) {
 		const isAlreadyExpired = !Number.isNaN(expMs) && expMs <= now;
 		const syncDiscordEvent = parsed.syncDiscordEvent !== false;
 
+		const isMatchingXpEvent = (ev: any, targetName?: string) => {
+			if (!ev) return false;
+			if (ev.entityMetadata?.location === 'https://app.xernerx.com/leaderboard') return true;
+			if (targetName && ev.name === targetName) return true;
+			return typeof ev.name === 'string' && ev.name.startsWith('⚡ ') && ev.name.includes('XP)');
+		};
+
 		if (!parsed.enabled || !syncDiscordEvent || isAlreadyExpired) {
-			if (parsed.discordEventId) {
+			const allEvents = await discordGuild.scheduledEvents.fetch().catch(() => null);
+			if (allEvents) {
+				for (const [, ev] of allEvents) {
+					if (ev.id === parsed.discordEventId || isMatchingXpEvent(ev)) {
+						await discordGuild.scheduledEvents.delete(ev.id).catch(() => null);
+					}
+				}
+			} else if (parsed.discordEventId) {
 				await discordGuild.scheduledEvents.delete(parsed.discordEventId).catch(() => null);
+			}
+
+			if (parsed.discordEventId || parsed.discordEventGuildId) {
 				parsed.discordEventId = null;
 				parsed.discordEventGuildId = null;
 				const nextRaw = JSON.stringify(parsed);
@@ -92,21 +128,50 @@ async function syncGlobalXpScheduledEvent(client: any) {
 		if (sig === lastSyncedEventSignature && parsed.discordEventId) return;
 
 		let eventId: string | null = parsed.discordEventId || null;
+		let existing: any = null;
 
-		if (eventId) {
-			const existing = await discordGuild.scheduledEvents.fetch(eventId).catch(() => null);
-			if (existing) {
+		const allEvents = await discordGuild.scheduledEvents.fetch().catch(() => null);
+		if (allEvents) {
+			const matchingEvents = (Array.from(allEvents.values()) as any[])
+				.filter((ev: any) => ev.id === eventId || isMatchingXpEvent(ev, eventName))
+				.sort((a: any, b: any) => (a.createdTimestamp || 0) - (b.createdTimestamp || 0));
+
+			if (eventId && allEvents.has(eventId)) {
+				existing = allEvents.get(eventId);
+			} else if (matchingEvents.length > 0) {
+				existing = matchingEvents[0];
+				eventId = existing.id;
+			}
+
+			// Prune any duplicate XP events in the guild
+			for (const dup of matchingEvents) {
+				if (existing && dup.id !== existing.id) {
+					await discordGuild.scheduledEvents.delete(dup.id).catch(() => null);
+				}
+			}
+		} else if (eventId) {
+			existing = await discordGuild.scheduledEvents.fetch(eventId).catch(() => null);
+			if (!existing) {
+				eventId = null;
+			}
+		}
+
+		if (existing) {
+			const existingEndMs = existing.scheduledEndTimestamp ?? (existing.scheduledEndTime ? new Date(existing.scheduledEndTime).getTime() : 0);
+			const endChanged = Math.abs(existingEndMs - scheduledEndMs) > 10_000;
+			const statusNeedsActive = existing.status === GuildScheduledEventStatus.Scheduled && isImmediate;
+			const nameOrDescChanged = existing.name !== eventName || existing.description !== eventDesc;
+
+			if (nameOrDescChanged || endChanged || statusNeedsActive) {
 				await existing
 					.edit({
 						name: eventName,
 						description: eventDesc,
 						scheduledEndTime: new Date(scheduledEndMs),
 						...(existing.status === GuildScheduledEventStatus.Scheduled && !isImmediate ? { scheduledStartTime: new Date(scheduledStartMs) } : {}),
-						...(existing.status === GuildScheduledEventStatus.Scheduled && isImmediate ? { status: GuildScheduledEventStatus.Active } : {}),
+						...(statusNeedsActive ? { status: GuildScheduledEventStatus.Active } : {}),
 					})
 					.catch(() => null);
-			} else {
-				eventId = null;
 			}
 		}
 
@@ -131,9 +196,10 @@ async function syncGlobalXpScheduledEvent(client: any) {
 			}
 		}
 
-		if (eventId && (eventId !== parsed.discordEventId || discordGuild.id !== parsed.discordEventGuildId)) {
+		if (eventId && (eventId !== parsed.discordEventId || discordGuild.id !== parsed.discordEventGuildId || canonicalTargetGuildId !== parsed.targetGuildId)) {
 			parsed.discordEventId = eventId;
 			parsed.discordEventGuildId = discordGuild.id;
+			parsed.targetGuildId = canonicalTargetGuildId;
 			const nextRaw = JSON.stringify(parsed);
 			await Promise.all([
 				ws.update('virtue', 'guilds', { id: '__global__', levelMessage: nextRaw, xpMultiplier: mult }).catch(() => null),

@@ -16,7 +16,7 @@
 	},
 	"keywords": [],
 	"author": "Xernerx Studios",
-	"license": "MIT",
+	"license": "SEE LICENSE IN LICENSE",
 	"packageManager": "pnpm@10.33.2",
 	"devDependencies": {
 		"@changesets/cli": "^3.0.3",
