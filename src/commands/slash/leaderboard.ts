@@ -140,7 +140,9 @@ export default class LeaderboardCommand extends SlashCommandBuilder {
 				const memberDocs = await Promise.all(
 					memberIds.map(async (uid) => {
 						if (track === 'global') {
-							return ws.get('xernerx', 'levels', { ownerId: uid }).catch(() => null);
+							const [uDoc, lDoc] = await Promise.all([ws.get('xernerx', 'users', { id: uid }).catch(() => null), ws.get('xernerx', 'levels', { ownerId: uid }).catch(() => null)]);
+							if (uDoc?.shadowban || uDoc?.blacklisted) return null;
+							return lDoc;
 						}
 						if (track === 'server') {
 							const [m, t, v] = await Promise.all([

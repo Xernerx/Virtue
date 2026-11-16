@@ -1,14 +1,13 @@
 ---
-'virtue': patch
+'virtue': minor
 ---
 
 <!-- @format -->
 
-## Global XP Scheduled Event Deduplication & Discord Entitlement Sync
+## Global Leaderboard Shadowban Exclusion
 
-Hardened Global XP Scheduled Event synchronization across bot instances and updated Virtue Pass entitlement identifiers.
+Excluded shadowbanned accounts (`shadowban: true`) from global leaderboard queries in `/leaderboard`.
 
 ### Changed
 
-- **Global XP Event Sync (`src/lib/cycleRunner.ts`)**: Scoped scheduled event lookups strictly to the configured `canonicalTargetGuildId` without falling back to `client.guilds.cache.first()`, and added automatic duplicate XP event pruning.
-- **Subscription Entitlement IDs (`src/lib/levels.ts`)**: Added `discord_virtue` to `VIRTUE_OR_ULTRA_IDS` and removed deprecated legacy price IDs.
+- **Global Leaderboard Shadowban Filter**: Added `shadowban: { $ne: true }` to global scope rankings in `src/commands/slash/leaderboard.ts`.
