@@ -35,3 +35,13 @@ export async function syncGuildMetadata(ws: any, guild: Guild) {
 		})
 		.catch(() => null);
 }
+
+export async function deleteGuildProfile(ws: any, guildId: string) {
+	if (!ws || !guildId || guildId === '__global__') return;
+
+	await ws
+		.delete('virtue', 'guilds', {
+			id: guildId,
+		})
+		.catch(() => null);
+}

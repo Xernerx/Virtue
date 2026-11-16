@@ -1,5 +1,17 @@
 <!-- @format -->
 
+## 2.5.1
+
+### Patch Changes
+
+- dbfd7bf: ## Automatic Guild Profile Cleanup on Server Removal
+  
+  Automatically remove the server setup profile when Virtue is removed from a Discord server so the dashboard accurately reflects bot installation status.
+  
+  ### Added
+  
+  - **Server Removal Lifecycle (`guildDelete`)**: Added `GuildDeleteEvent` and `deleteGuildProfile` to delete the server setup profile when Virtue leaves or is removed from a server.
+
 ## 2.5.0
 
 ### Minor Changes

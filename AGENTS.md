@@ -11,7 +11,7 @@
 - `src/main.ts`: Bot client bootstrap (`intents: ['Guilds', 'GuildMessages', 'GuildVoiceStates']` — strictly no `MessageContent` intent).
 - `src/commands/slash/{boost,info,leaderboard,level,roles,setup}.ts`: Slash commands for XP boost inspection (`/boost`), rank cards (`/level`), leaderboards (`/leaderboard`), role rewards (`/roles`), and server setup (`/setup`).
 - `src/commands/context/{level,messageLevel}.ts`: User and Message context menu commands for inspecting level cards.
-- `src/events/{clientReady,guildCreate,messageCreate,voiceStateUpdate}.ts`: Real-time Text and Voice XP calculation, cooldown enforcement, level-up credit rewards, and Discord role/channel cache syncing.
+- `src/events/{clientReady,guildCreate,guildDelete,messageCreate,voiceStateUpdate}.ts`: Real-time Text and Voice XP calculation, cooldown enforcement, level-up credit rewards, and Discord role/channel/guild profile lifecycle syncing.
 - `src/lib/dynamicRoles.ts`: Dynamic Hoist Roles engine (`selectDefiningMilestones`, `syncDynamicGuildRoles`, hex gradient interpolation, and `[@level]` naming templates within Discord's 250-role guild cap).
 - `src/lib/cycleRunner.ts`: Automated `daily`, `weekly`, `monthly`, and `yearly` server leaderboard cycle resets and Global XP Scheduled Event synchronization.
 - `src/lib/levelCard.ts` & `src/lib/levels.ts`: SVG/PNG card renderer (`@resvg/resvg-js` & `sharp`), XP curve math (`easy`, `casual`, `balanced`, `hard`, `extreme`), and `Automatic Service Profiles` (`services: false`) opt-out checks.

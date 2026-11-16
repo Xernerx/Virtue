@@ -23,8 +23,8 @@
   4. **Server Voice Level & XP** (`virtue/voice`) — Active undeafened duration (`timeSpent`) in non-AFK voice channels with at least 2 eligible non-bot members and streaming XP multipliers (`1.25x`).
 - **Strict Data Minimization (`Zero Message Content`):** Connects solely with `Guilds`, `GuildMessages`, and `GuildVoiceStates` gateway intents—never requesting the privileged `MessageContent` intent and never joining voice channels or capturing audio.
 - **Dynamic Hoist Roles (`src/lib/dynamicRoles.ts`):** Automatically manages milestone hoist roles, custom naming templates (`[@level]`), and hex color gradients within Discord's 250-role server limit based on active member level distribution.
-- **Stackable XP Boosts (`/boost`):** Combines published Bot Directory review bonuses (`+10%`), 12-hour vote windows (`+10%`), Virtue Pass / Xernerx Ultra subscriptions (`+10%`), Server Booster multipliers, role multipliers, and Global XP Events.
-- **Automated Leaderboard Cycle Resets (`src/lib/cycleRunner.ts`):** Supports automated `daily`, `weekly`, `monthly`, and `yearly` server leaderboard resets and Discord Scheduled Event synchronization for Global XP multipliers.
+- **Stackable XP Boosts (`/boost`):** Combines published Bot Directory review bonuses (`+5%`), 12-hour vote windows (`+10%`), Virtue Pass / Xernerx Ultra subscriptions (`+50%`), Server Booster multipliers, role multipliers, and Global XP Events.
+- **Automated Leaderboard Cycle Resets & Guild Lifecycle (`src/lib/cycleRunner.ts`, `src/lib/guildSync.ts`):** Supports automated `daily`, `weekly`, `monthly`, and `yearly` server leaderboard resets, Discord Scheduled Event synchronization for Global XP multipliers, and automatic guild profile cleanup when removed from a server (`guildDelete`).
 - **Personalized SVG/PNG Rank Cards (`src/lib/levelCard.ts`):** Renders `/level` and `/leaderboard` cards via `@resvg/resvg-js` and `sharp` using each user's Xernerx Account theme, `--accent` color, and locale.
 
 ---
