@@ -1,5 +1,19 @@
 <!-- @format -->
 
+## 2.5.0
+
+### Minor Changes
+
+- dbfd7bf: <!-- @format -->
+  
+  ## Global Leaderboard Shadowban Exclusion
+  
+  Excluded shadowbanned accounts (`shadowban: true`) from global leaderboard queries in `/leaderboard`.
+  
+  ### Changed
+  
+  - **Global Leaderboard Shadowban Filter**: Added `shadowban: { $ne: true }` to global scope rankings in `src/commands/slash/leaderboard.ts`.
+
 ## 2.4.0
 
 ### Minor Changes
