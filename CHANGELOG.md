@@ -1,5 +1,17 @@
 <!-- @format -->
 
+## 2.5.3
+
+### Patch Changes
+
+- dbfd7bf: ## Framework & SDK Dependency Upgrades
+  
+  Upgraded `@xernerx/*` framework, commands, stats, terminal, and websocket dependencies to their latest versions.
+  
+  ### Changed
+  
+  - **Dependency Upgrades**: Updated `@xernerx/commands` (`^0.2.10`), `@xernerx/framework` (`^1.3.0`), `@xernerx/stats` (`^1.0.16`), `@xernerx/terminal` (`^1.2.2`), and `@xernerx/websocket` (`^0.5.1`).
+
 ## 2.5.2
 
 ### Patch Changes
