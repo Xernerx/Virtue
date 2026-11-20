@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { SlashCommandBuilder, type SlashCommandOptions } from '@xernerx/framework';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, version as djsVersion } from 'discord.js';
+import { getAppUrl } from '../../lib/endpoints.js';
 import { resolveUserAccent } from '../../lib/levelCard.js';
 
 function getVersions(): { bot: string; framework: string } {
@@ -69,7 +70,8 @@ export default class InfoCommand extends SlashCommandBuilder {
 		const rssMiB = (process.memoryUsage().rss / 1048576).toFixed(1);
 		const startedUnix = Math.round(Date.now() / 1000 - process.uptime());
 
-		const dashboardUrl = interaction.guild?.id ? `https://app.xernerx.com/dashboard?tab=virtue&guild=${interaction.guild.id}` : 'https://app.xernerx.com/dashboard';
+		const appUrl = getAppUrl();
+		const dashboardUrl = interaction.guild?.id ? `${appUrl}/dashboard?tab=virtue&guild=${interaction.guild.id}` : `${appUrl}/dashboard`;
 
 		const embed = new EmbedBuilder()
 			.setColor(accent.colorInt)

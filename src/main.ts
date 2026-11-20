@@ -6,13 +6,19 @@ import { XernerxStats } from '@xernerx/stats';
 import { XernerxWebsocket } from '@xernerx/websocket';
 import { config } from 'dotenv';
 import fs from 'fs';
+import { getApiUrl, getWsUrl, isCanaryTarget, isProductionTarget } from './lib/endpoints.js';
 
 config({ quiet: true });
+
+if (!process.env.API_URL?.trim() && isCanaryTarget()) {
+	process.env.API_URL = 'https://api.canary.xernerx.com';
+}
 
 export class WebSocket extends XernerxWebsocket {
 	constructor() {
 		super({
 			token: (process.env.WS_TOKEN || process.env.API_TOKEN)!,
+			url: getWsUrl(),
 		});
 	}
 
@@ -38,9 +44,9 @@ export class Client extends XernerxClient {
 		super({
 			intents: ['Guilds', 'GuildMessages', 'GuildVoiceStates'],
 			token: process.env.TOKEN as string,
-			guildId: '784094726432489522',
-			owners: '482513687417061376',
-			global: process.env.NODE_ENV != 'DEVELOPMENT',
+			guildId: process.env.GUILD_ID || '784094726432489522',
+			owners: process.env.OWNER_ID || '482513687417061376',
+			global: isProductionTarget(),
 		});
 
 		this.modules.eventHandler.loadEvents({
@@ -63,12 +69,16 @@ export class Client extends XernerxClient {
 			handleDeletions: true,
 		});
 
+		const apiUrl = getApiUrl();
+
 		this.modules.extensionHandler.loadExtensions(
 			new XernerxCommands(this, {
 				token: process.env.API_TOKEN!,
+				url: apiUrl,
 			}),
 			new XernerxStats(this, {
 				token: process.env.API_TOKEN!,
+				url: apiUrl,
 			})
 		);
 

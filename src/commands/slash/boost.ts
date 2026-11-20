@@ -2,6 +2,7 @@
 
 import { SlashCommandBuilder, type SlashCommandOptions, XernerxUser } from '@xernerx/framework';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { getAppUrl } from '../../lib/endpoints.js';
 import { resolveUserAccent } from '../../lib/levelCard.js';
 import { checkUserServices, PREMIUM_PASS_XP_BONUS, REVIEW_XP_BONUS, VOTE_XP_BONUS } from '../../lib/levels.js';
 
@@ -26,8 +27,9 @@ export default class BoostCommand extends SlashCommandBuilder {
 
 		const [serviceCheck, accent] = await Promise.all([checkUserServices(ws, interaction.user.id, xUser, { forceRefresh: true }), resolveUserAccent(ws, interaction.user.id)]);
 
-		const reviewUrl = `https://app.xernerx.com/bots/${botId}?view=reviews`;
-		const voteUrl = `https://app.xernerx.com/bots/${botId}`;
+		const appUrl = getAppUrl();
+		const reviewUrl = `${appUrl}/bots/${botId}?view=reviews`;
+		const voteUrl = `${appUrl}/bots/${botId}`;
 		const subscriptionUrl = 'https://store.xernerx.com/?item=bot-virtue';
 
 		const reviewPct = Math.round(REVIEW_XP_BONUS * 100);

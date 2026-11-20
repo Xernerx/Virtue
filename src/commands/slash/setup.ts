@@ -2,6 +2,7 @@
 
 import { SlashCommandBuilder, type SlashCommandOptions } from '@xernerx/framework';
 import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { getAppUrl } from '../../lib/endpoints.js';
 import { syncGuildMetadata } from '../../lib/guildSync.js';
 import { renderSetupCardPng, resolveUserAccent, type LevelRoleSummary } from '../../lib/levelCard.js';
 import { extractGuildLevelRoles } from '../../lib/levels.js';
@@ -37,7 +38,8 @@ export default class SetupCommand extends SlashCommandBuilder {
 
 		const [accent, guild] = await Promise.all([resolveUserAccent(ws, interaction.user.id), guildId ? ws.get('virtue', 'guilds', { id: guildId }).catch(() => null) : Promise.resolve(null)]);
 
-		const url = guildId ? `https://app.xernerx.com/dashboard?tab=virtue&guild=${guildId}` : 'https://app.xernerx.com/dashboard';
+		const appUrl = getAppUrl();
+		const url = guildId ? `${appUrl}/dashboard?tab=virtue&guild=${guildId}` : `${appUrl}/dashboard`;
 		const botUser = interaction.client.user;
 		const botAvatar = botUser?.displayAvatarURL({ extension: 'png', size: 256 }) || null;
 		const guildIcon = interaction.guild?.iconURL({ extension: 'png', size: 256 }) || botAvatar;

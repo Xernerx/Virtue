@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Resvg } from '@resvg/resvg-js';
 import sharp from 'sharp';
+import { getApiUrl } from './endpoints.js';
 
 function initBundledFonts(): string[] {
 	const candidateDirs = [resolve(fileURLToPath(new URL('../../assets/fonts', import.meta.url))), resolve(process.cwd(), 'assets/fonts')];
@@ -149,7 +150,7 @@ export async function resolveUserAccent(ws: any, targetUserId: string, invokerUs
 		} catch {}
 	}
 
-	const apiBase = 'https://api.xernerx.com';
+	const apiBase = getApiUrl();
 	for (const uid of candidateIds) {
 		try {
 			const res = await fetch(`${apiBase}/core/users/${uid}`);

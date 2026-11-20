@@ -3,6 +3,7 @@
 import { EventBuilder } from '@xernerx/framework';
 import { ActivityType, type PresenceStatusData } from 'discord.js';
 import { runCycleChecks } from '../lib/cycleRunner.js';
+import { getAppUrl, getWsHealthUrl } from '../lib/endpoints.js';
 import { syncGuildMetadata } from '../lib/guildSync.js';
 
 export default class ClientReadyEvent extends EventBuilder {
@@ -31,7 +32,8 @@ export default class ClientReadyEvent extends EventBuilder {
 	override async run() {
 		const client = this.client;
 		const ws = (client as any).websocket;
-		const healthUrl = 'https://ws.xernerx.com/health';
+		const healthUrl = getWsHealthUrl();
+		const appUrl = getAppUrl();
 
 		const connect = async () => {
 			const healthy = await fetch(healthUrl)
@@ -55,7 +57,7 @@ export default class ClientReadyEvent extends EventBuilder {
 				name: 'Xernerx WS',
 				type: ActivityType.Streaming,
 				state: 'Connecting to the Xernerx WS',
-				url: 'https://app.xernerx.com',
+				url: appUrl,
 			};
 
 			const presence = {

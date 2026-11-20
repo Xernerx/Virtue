@@ -2,6 +2,7 @@
 
 import { SlashCommandBuilder, type SlashCommandOptions } from '@xernerx/framework';
 import { AttachmentBuilder, EmbedBuilder } from 'discord.js';
+import { getAppUrl } from '../../lib/endpoints.js';
 import { renderLevelCardPng, resolveUserAccent, type LevelRoleSummary } from '../../lib/levelCard.js';
 import { calculateLevel, checkUserServices, extractGuildLevelRoles, isServicesDisabledDoc, resolveUnifiedServerProgress } from '../../lib/levels.js';
 
@@ -170,7 +171,7 @@ export async function replyWithLevelCard(ws: any, interaction: any, target: any)
 		.setColor(accent.colorInt)
 		.setAuthor({
 			name: `${displayName} • Level Progression`,
-			url: `https://app.xernerx.com/users/${target.id}`,
+			url: `${getAppUrl()}/users/${target.id}`,
 			...(avatarUrl ? { iconURL: avatarUrl } : {}),
 		})
 		.setImage('attachment://level-progression.png')

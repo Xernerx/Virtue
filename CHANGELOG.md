@@ -1,5 +1,21 @@
 <!-- @format -->
 
+## 2.5.2
+
+### Patch Changes
+
+- dbfd7bf: ## Canary Endpoint Resolution & License Synchronization
+  
+  Added environment-aware Canary/Production/Development endpoint resolution (`src/lib/endpoints.ts`) and synchronized `LICENSE` and package metadata with the Xernerx Suite monorepo.
+  
+  ### Added
+  
+  - **Canary & Environment Endpoint Resolution (`src/lib/endpoints.ts`)**: Added `isCanaryTarget`, `isProductionTarget`, `getApiUrl`, `getWsUrl`, `getWsHealthUrl`, and `getAppUrl` so Virtue automatically targets `api.canary.xernerx.com`, `app.canary.xernerx.com`, and `ws.xernerx.com` when `ENVIRONMENT=CANARY` (or `NODE_ENV=CANARY`).
+  
+  ### Changed
+  
+  - **License & Package Metadata**: Updated `LICENSE`, `package.json` (`license: "SEE LICENSE IN LICENSE"`, `packageManager: "pnpm@12.21.0"`, `engines.node: ">=24"`), and `pnpm-lock.yaml`.
+
 ## 2.5.1
 
 ### Patch Changes

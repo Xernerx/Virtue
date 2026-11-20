@@ -2,6 +2,7 @@
 
 import { SlashCommandBuilder, type SlashCommandOptions } from '@xernerx/framework';
 import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { getApiUrl, getAppUrl } from '../../lib/endpoints.js';
 import { renderLeaderboardCardPng, resolveUserAccent, type LeaderboardEntryData } from '../../lib/levelCard.js';
 import { calculateLevel, isServicesDisabledDoc, resolveUnifiedServerProgress } from '../../lib/levels.js';
 
@@ -105,9 +106,10 @@ export default class LeaderboardCommand extends SlashCommandBuilder {
 
 		// Fallback 1: Public REST API if WebSocket list query returned empty
 		if (list.length === 0) {
+			const apiBase = getApiUrl();
 			const apiUrls = guildId
-				? [`https://api.xernerx.com/v1/leaderboard?guild=${encodeURIComponent(guildId)}`, `http://localhost:4001/v1/leaderboard?guild=${encodeURIComponent(guildId)}`]
-				: ['https://api.xernerx.com/v1/leaderboard', 'http://localhost:4001/v1/leaderboard'];
+				? [`${apiBase}/v1/leaderboard?guild=${encodeURIComponent(guildId)}`, `http://localhost:4001/v1/leaderboard?guild=${encodeURIComponent(guildId)}`]
+				: [`${apiBase}/v1/leaderboard`, 'http://localhost:4001/v1/leaderboard'];
 			for (const url of apiUrls) {
 				try {
 					const res = await fetch(url);
@@ -244,8 +246,8 @@ export default class LeaderboardCommand extends SlashCommandBuilder {
 			name: 'leaderboard.png',
 		});
 
-		const leaderboardUrl =
-			track === 'global' || !guildId ? 'https://app.xernerx.com/leaderboard?tab=levels&track=global' : `https://app.xernerx.com/leaderboard?tab=levels&guild=${guildId}&track=${track}`;
+		const appUrl = getAppUrl();
+		const leaderboardUrl = track === 'global' || !guildId ? `${appUrl}/leaderboard?tab=levels&track=global` : `${appUrl}/leaderboard?tab=levels&guild=${guildId}&track=${track}`;
 
 		const embed = new EmbedBuilder()
 			.setColor(accent.colorInt)
